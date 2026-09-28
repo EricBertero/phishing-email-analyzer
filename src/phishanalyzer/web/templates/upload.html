@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Upload · Phishing Email Analyzer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Check an email file</h1>
+    <div class="muted">Analyse a saved email (.eml). In Gmail: open the email, &#8942; &rarr; Download message</div>
+  </div>
+</div>
+
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="card">
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p><input type="file" name="file" accept=".eml,message/rfc822" required aria-label="Email file"></p>
+    {% if intel_enabled %}
+    <label class="check"><input type="checkbox" name="offline" value="true">
+      <span>Keep it local<br><span class="small muted">Skip threat-intel lookups. Otherwise the links, domains, sending IP and attachment hashes are checked against the configured services.</span></span></label>
+    {% endif %}
+    <label class="check"><input type="checkbox" name="report" value="true">
+      <span>Write a report<br><span class="small muted">HTML and PDF. If an Anthropic key is configured, the AI summary receives the findings and a short redacted excerpt, never attachments.</span></span></label>
+    <p><button class="btn primary" type="submit">Analyse</button></p>
+  </form>
+  <p class="small muted">The file itself is not kept: only the verdict, headers summary and findings are stored.</p>
+</section>
+{% endblock %}

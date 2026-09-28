@@ -11,7 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import JSON, Column, UniqueConstraint, inspect, text
+from sqlalchemy import JSON, Column, UniqueConstraint, event, func, inspect, or_, text
+from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from phishanalyzer.models import Email, Level, Verdict
@@ -161,6 +162,15 @@ class SqlIntelCache:
             s.commit()
 
 
+def _sqlite_pragmas(dbapi_connection, _record) -> None:
+    """WAL lets the dashboard read while the poller writes, instead of 'database is locked'."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=15000")
+    cursor.close()
+
+
 def _add_missing_columns(engine) -> None:
     """Minimal forward migration: add columns introduced after a DB was created.
 
@@ -187,9 +197,20 @@ def _add_missing_columns(engine) -> None:
 
 class Store:
     def __init__(self, db_path: Path | str):
-        if str(db_path) != ":memory:":
+        if str(db_path) == ":memory:":
+            # One shared connection: each new connection to :memory: would be a separate,
+            # empty database (the dashboard serves requests from worker threads).
+            self.engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+        else:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_engine(f"sqlite:///{db_path}")
+            self.engine = create_engine(
+                f"sqlite:///{db_path}", connect_args={"check_same_thread": False, "timeout": 15}
+            )
+            event.listen(self.engine, "connect", _sqlite_pragmas)
         SQLModel.metadata.create_all(self.engine)
         _add_missing_columns(self.engine)
 
@@ -416,6 +437,65 @@ class Store:
         with Session(self.engine) as s:
             query = select(Report).order_by(Report.updated_at.desc()).limit(limit)  # type: ignore[attr-defined]
             return list(s.exec(query))
+
+    # --- dashboard queries -------------------------------------------------------------
+    def get_row_by_id(self, row_id: int) -> ScannedEmail | None:
+        with Session(self.engine) as s:
+            return s.get(ScannedEmail, row_id)
+
+    def get_report_by_id(self, report_id: int) -> Report | None:
+        with Session(self.engine) as s:
+            return s.get(Report, report_id)
+
+    def search(
+        self,
+        level: Level | None = None,
+        query: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[ScannedEmail], int]:
+        """Newest first, filtered by level and a substring of subject/sender. (rows, total)"""
+        conditions = []
+        if level is not None:
+            conditions.append(ScannedEmail.level == level)
+        if query:
+            like = f"%{query.strip()}%"
+            conditions.append(
+                or_(
+                    ScannedEmail.subject.ilike(like),  # type: ignore[attr-defined]
+                    ScannedEmail.from_addr.ilike(like),  # type: ignore[union-attr]
+                    ScannedEmail.from_display.ilike(like),  # type: ignore[union-attr]
+                )
+            )
+        with Session(self.engine) as s:
+            total = s.exec(select(func.count()).select_from(ScannedEmail).where(*conditions)).one()
+            rows = s.exec(
+                select(ScannedEmail)
+                .where(*conditions)
+                .order_by(ScannedEmail.scanned_at.desc(), ScannedEmail.id.desc())  # type: ignore[attr-defined]
+                .offset(offset)
+                .limit(limit)
+            ).all()
+            return list(rows), int(total)
+
+    def rows_since(self, since: datetime) -> list[ScannedEmail]:
+        with Session(self.engine) as s:
+            query = select(ScannedEmail).where(ScannedEmail.scanned_at >= since)
+            return list(s.exec(query))
+
+    def jobs_for_message(self, provider: str, provider_id: str) -> list[SandboxJob]:
+        with Session(self.engine) as s:
+            query = (
+                select(SandboxJob)
+                .where(SandboxJob.provider == provider, SandboxJob.provider_id == provider_id)
+                .order_by(SandboxJob.id)
+            )
+            return list(s.exec(query))
+
+    def count_jobs(self, status: JobStatus) -> int:
+        with Session(self.engine) as s:
+            query = select(func.count()).select_from(SandboxJob).where(SandboxJob.status == status)
+            return int(s.exec(query).one())
 
     def recent(self, limit: int = 20, level: Level | None = None) -> list[ScannedEmail]:
         with Session(self.engine) as s:

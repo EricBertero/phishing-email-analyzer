@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import email_row %}
+{% block title %}Emails · Phishing Email Analyzer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Emails</h1>
+    <div class="muted">{{ "{:,}".format(total) }} {{ "email" if total == 1 else "emails" }}{% if level %} rated {{ level_labels[level] | lower }}{% endif %}{% if q %} matching &ldquo;{{ q }}&rdquo;{% endif %}</div>
+  </div>
+</div>
+
+<div class="filters">
+  <div class="chips" role="group" aria-label="Filter by verdict">
+    <a class="chip" href="{{ link(level=None, p=1) }}" {% if not level %}aria-current="true"{% endif %}>All</a>
+    {% for lv in levels | reverse %}
+    <a class="chip" href="{{ link(level=lv, p=1) }}" {% if level == lv %}aria-current="true"{% endif %}>{{ level_labels[lv] }}</a>
+    {% endfor %}
+  </div>
+  <form method="get" action="/emails" role="search">
+    {% if level %}<input type="hidden" name="level" value="{{ level }}">{% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="Search subject or sender" aria-label="Search subject or sender">
+  </form>
+</div>
+
+<section class="card">
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>Scanned</th><th>Verdict</th><th class="num">Score</th><th>Email</th><th></th></tr></thead>
+      <tbody>{% for row in rows %}{{ email_row(row) }}{% endfor %}</tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+  <nav class="pager" aria-label="Pages">
+    {% if p > 1 %}<a href="{{ link(p=p - 1) }}">&larr; Newer</a>{% endif %}
+    <span>Page {{ p }} of {{ pages }}</span>
+    {% if p < pages %}<a href="{{ link(p=p + 1) }}">Older &rarr;</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <p class="empty">{% if q or level %}No emails match these filters.{% else %}Nothing scanned yet. Start <span class="mono">phish run</span>, or <a href="/upload">upload an .eml file</a>.{% endif %}</p>
+  {% endif %}
+</section>
+{% endblock %}

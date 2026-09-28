@@ -154,3 +154,51 @@ def test_scan_eml_report_offline(tmp_path, monkeypatch):
     assert "CRITICAL" in html and "hxxps://storage[.]googleapis[.]com" in html
     assert "AI summary not included" in html  # --offline: nothing sent to Claude
     assert (tmp_path / "reports" / "file-test1.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_supervisor_stops_everything_when_dashboard_ends():
+    import asyncio
+
+    from phishanalyzer.cli import _run_until_stopped
+
+    stopped = []
+
+    class Scanner:
+        async def run_forever(self, stop):
+            await stop.wait()
+            stopped.append("scanner")
+
+    class Worker:
+        async def run_forever(self, stop):
+            await stop.wait()
+            stopped.append("worker")
+
+    async def dashboard(stop):
+        await asyncio.sleep(0.01)  # e.g. uvicorn exiting on Ctrl+C
+
+    asyncio.run(_run_until_stopped(Scanner(), Worker(), dashboard))
+    assert sorted(stopped) == ["scanner", "worker"]
+
+
+def test_serve_refuses_non_loopback_host(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text("dashboard:\n  host: 0.0.0.0\n")
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 2 and "Refusing" in result.output
+
+
+def test_dashboard_port_in_use_is_a_clear_error(settings):
+    import asyncio
+    import socket
+
+    import pytest
+    from fastapi import FastAPI
+
+    from phishanalyzer.cli import _dashboard_runner
+
+    with socket.socket() as blocker:
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen()
+        port = blocker.getsockname()[1]
+        with pytest.raises(RuntimeError, match="port in use"):
+            asyncio.run(_dashboard_runner(FastAPI(), settings, port)(asyncio.Event()))

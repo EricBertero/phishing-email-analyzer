@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Phishing Email Analyzer{% endblock %}</title>
+<link rel="stylesheet" href="/static/dashboard.css?v={{ asset_version }}">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232a78d6' d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z'/%3E%3C/svg%3E">
+<script src="/static/dashboard.js?v={{ asset_version }}" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Zm0 5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1Zm0 8.2a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4Z"/></svg>
+      Phishing Analyzer
+    </a>
+    <nav class="main" aria-label="Main">
+      <a href="/" {% if nav == "overview" %}aria-current="page"{% endif %}>Overview</a>
+      <a href="/emails" {% if nav == "emails" %}aria-current="page"{% endif %}>Emails</a>
+      <a href="/sandbox" {% if nav == "sandbox" %}aria-current="page"{% endif %}>Sandbox{% if awaiting %}<span class="count-pill" title="{{ awaiting }} awaiting approval">{{ awaiting }}</span>{% endif %}</a>
+      <a href="/upload" {% if nav == "upload" %}aria-current="page"{% endif %}>Upload</a>
+    </nav>
+    <div class="conn">
+      <span><span class="dot {% if has_mailbox %}on{% endif %}"></span>{% if has_mailbox %}Watching Gmail{% else %}Not watching a mailbox{% endif %}</span>
+      <button type="button" class="icon-btn" id="theme-toggle" aria-label="Toggle dark mode">&#9680;</button>
+    </div>
+  </div>
+</header>
+<main>
+{% if notice %}<div class="notice {{ notice[0] }}" role="status">{{ notice[1] }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+<footer>Phishing Email Analyzer {{ version }} &middot; local dashboard, bound to this computer only</footer>
+</body>
+</html>

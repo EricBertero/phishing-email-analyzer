@@ -6,8 +6,8 @@ URL and IP/hostname reputation, and attachment analysis (file type, VirusTotal, 
 Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 `Phish/Critical`). Critical cases also get an HTML/PDF report with an AI-written summary.
 
-> **Status: early rebuild.** This started as a hackathon project and is being rewritten
-> as a proper service. The original code lives in [`legacy/`](legacy/) until it is fully ported.
+> **Status: feature-complete rebuild, not yet battle-tested on real mailboxes.** This started as a hackathon project and is being rewritten
+> as a proper service. The original hackathon code is kept in [`legacy/`](legacy/) for reference.
 
 ## Roadmap
 
@@ -17,7 +17,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 - [x] **4. Threat intel**: URLhaus, Spamhaus DQS, AbuseIPDB, VirusTotal, optional rspamd
 - [x] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
 - [x] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
-- [ ] **7. Dashboard**: FastAPI web UI
+- [x] **7. Dashboard**: FastAPI web UI
 
 ## Setup
 
@@ -54,7 +54,7 @@ labels. It never sends or deletes mail.
 
 ```bash
 phish run --dry-run --once   # scan the latest emails once, change nothing in Gmail
-phish run                    # keep watching; label new mail every poll_interval_seconds
+phish run                    # keep watching and labelling; dashboard on http://127.0.0.1:8000
 phish recent                 # verdicts stored in data/phishanalyzer.db
 phish recent --level critical
 ```
@@ -66,6 +66,29 @@ mail. Each message gets one of the labels `Phish/Clean`, `Phish/Low`, `Phish/Sus
 mail out of the inbox. If Gmail can't be reached, nothing is skipped: the scanner backs
 off and resumes from where it stopped. The database stores only headers, scores and
 findings, never message bodies or attachments.
+
+## Dashboard
+
+`phish run` also serves a local web dashboard at **http://127.0.0.1:8000**
+(`--no-dashboard` to turn it off). To browse the results without watching the mailbox:
+
+```bash
+phish serve           # dashboard only, on the existing database
+phish serve --demo    # generated example data in a temporary database; try it first
+```
+
+- **Overview**: verdict counts and scanned emails per day for the last 14 days, the
+  latest high-risk emails, the domains sending them, and the most common warning signs.
+- **Emails**: every scanned email, filterable by verdict and searchable by subject or
+  sender. Each email shows its score breakdown, report (HTML/PDF) and sandbox jobs, with
+  buttons to analyse it again or (re)write its report.
+- **Sandbox**: approve or decline attachment uploads when `sandbox_upload: ask`.
+- **Upload**: drop in an `.eml` file to check it; the file itself is not kept.
+
+The dashboard has no login, so it is built to stay on your computer. It refuses to
+start on any address but loopback, rejects requests whose `Host` isn't local (DNS
+rebinding) and cross-site form posts (CSRF token plus Origin check), and sends a strict
+Content-Security-Policy. Reports are served with a policy that allows no scripts at all.
 
 ## Scanning files
 
