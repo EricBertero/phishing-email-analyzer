@@ -20,13 +20,13 @@ key.txt
 # Local config (copy from config.example.yaml)
 config.yaml
 
-# Runtime data
-data/
+# Runtime data (anchored to the repo root: src/phishanalyzer/data/ is package data)
+/data/
 *.db
 *.db-journal
-reports/
-samples/
-logs/
+/reports/
+/samples/
+/logs/
 
 # Editors / OS
 .vscode/
