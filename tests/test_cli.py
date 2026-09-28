@@ -141,3 +141,16 @@ def test_run_until_stopped_stops_worker_when_scanner_dies():
     with pytest.raises(AuthRequired, match="token revoked"):
         asyncio.run(_run_until_stopped(Scanner(), Worker()))
     assert events == ["worker stopped"]
+
+
+def test_scan_eml_report_offline(tmp_path, monkeypatch):
+    from conftest import FIXTURES
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-be-used-offline")
+    result = runner.invoke(app, ["scan-eml", str(FIXTURES / "test1.eml"), "--report", "--offline"])
+    assert result.exit_code == 0, result.output
+    html = (tmp_path / "reports" / "file-test1.html").read_text(encoding="utf-8")
+    assert "CRITICAL" in html and "hxxps://storage[.]googleapis[.]com" in html
+    assert "AI summary not included" in html  # --offline: nothing sent to Claude
+    assert (tmp_path / "reports" / "file-test1.pdf").read_bytes().startswith(b"%PDF")
