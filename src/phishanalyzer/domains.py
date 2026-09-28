@@ -62,7 +62,11 @@ def registrable_domain(host: str | None) -> str | None:
     parts = _extract(host)
     if not parts.domain:
         return host
-    return f"{parts.domain}.{parts.suffix}" if parts.suffix else parts.domain
+    if not parts.suffix:
+        # TLD not on the Public Suffix List (brand-new TLD, internal name): treat the
+        # last two labels as the organisation instead of collapsing to a bare label.
+        return ".".join(host.split(".")[-2:])
+    return f"{parts.domain}.{parts.suffix}"
 
 
 def domain_label(host: str | None) -> str | None:

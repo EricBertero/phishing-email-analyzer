@@ -1,0 +1,23 @@
+{% macro level_badge(level, big=False) -%}
+{%- if level -%}
+<span class="level {{ level }}{% if big %} big{% endif %}">{{ level_labels[level] }}</span>
+{%- else -%}
+<span class="level">Error</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro email_row(row) -%}
+<tr>
+  <td class="small muted" title="{{ row.scanned_at | stamp }}">{{ row.scanned_at | ago }}</td>
+  <td>{{ level_badge(row.level.value if row.level else None) }}</td>
+  <td class="num">{{ row.score if row.score is not none else "" }}</td>
+  <td>
+    <a class="subject" href="/emails/{{ row.id }}">{{ row.subject or row.error or "(no subject)" }}</a>
+    <div class="sender">{% if row.from_display %}{{ row.from_display }} &middot; {% endif %}{{ row.from_addr or "" }}</div>
+  </td>
+  <td>
+    {% if row.partial %}<span class="tag" title="Some lookups were unavailable; it will be re-checked">partial</span>{% endif %}
+    {% if row.provider == "upload" %}<span class="tag">uploaded</span>{% endif %}
+  </td>
+</tr>
+{%- endmacro %}
