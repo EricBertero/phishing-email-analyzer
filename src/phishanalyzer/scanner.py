@@ -32,6 +32,7 @@ class PollResult:
     skipped: int = 0
     failed: int = 0
     cursor_advanced: bool = False
+    rechecked: int = 0
 
 
 class Scanner:
@@ -94,9 +95,29 @@ class Scanner:
         if result.failed == 0:
             self.store.set_cursor(name, new_cursor)
             result.cursor_advanced = True
+        result.rechecked = await self.recheck_partial()
         return result
 
-    async def scan_message(self, message_id: str) -> ScannedEmail:
+    async def recheck_partial(self) -> int:
+        """Re-analyse verdicts whose intel lookups were unavailable (quota, outage).
+
+        A few attempts, spaced out; the verdict and label are updated if they change.
+        """
+        rechecked = 0
+        for row in self.store.due_for_recheck(self.provider.name):
+            try:
+                await self.scan_message(row.provider_id, rechecks=row.rechecks + 1)
+                rechecked += 1
+            except MessageGone:
+                self.store.stop_rechecks(row.id)
+            except AuthRequired:
+                raise
+            except ProviderError as exc:
+                log.warning("Could not re-check %s: %s", row.provider_id, exc)
+                break  # provider trouble: try again next poll
+        return rechecked
+
+    async def scan_message(self, message_id: str, rechecks: int = 0) -> ScannedEmail:
         raw = await self._call(self.provider.get_raw, message_id)
         try:
             email = parse_message(raw, provider_id=message_id)
@@ -106,11 +127,12 @@ class Scanner:
             log.exception("Failed to analyse message %s", message_id)
             return self.store.save_error(self.provider.name, message_id, repr(exc))
 
-        row = self.store.save_result(self.provider.name, email, verdict)
+        row = self.store.save_result(self.provider.name, email, verdict, rechecks=rechecks)
         log.info(
-            "[%s %d] %s: %s",
+            "[%s %d]%s %s: %s",
             verdict.level.upper(),
             verdict.score,
+            " (partial)" if verdict.partial else "",
             email.from_addr,
             email.subject[:80],
         )

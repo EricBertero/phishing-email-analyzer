@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from phishanalyzer.intel.base import IntelUnavailable
+from phishanalyzer.intel.rspamd import RspamdClient
 from phishanalyzer.models import Email, Finding, Severity
 
 _SA_SCORE = re.compile(r"score=(-?\d+(?:\.\d+)?)", re.I)
@@ -73,3 +75,49 @@ def _to_float(value: str | None) -> float | None:
         return float(value) if value else None
     except ValueError:
         return None
+
+
+# rspamd action -> (points, severity). "no action" scores nothing.
+_RSPAMD_ACTIONS = {
+    "reject": (25, Severity.HIGH),
+    "rewrite subject": (15, Severity.MEDIUM),
+    "add header": (15, Severity.MEDIUM),
+    "soft reject": (5, Severity.LOW),
+    "greylist": (5, Severity.LOW),
+}
+
+
+class RspamdAnalyzer:
+    """A real spam score from a local rspamd instance (Bayes, fuzzy hashes, RBLs...)."""
+
+    name = "rspamd"
+
+    def __init__(self, client: RspamdClient):
+        self.client = client
+
+    async def analyze(self, email: Email) -> list[Finding]:
+        if not email.raw:
+            return []
+        try:
+            result = await self.client.check(email.raw, ip=email.sender_ip, sender=email.from_addr)
+        except IntelUnavailable as exc:
+            return [
+                Finding(
+                    signal="rspamd.unavailable",
+                    points=0,
+                    severity=Severity.INFO,
+                    message=f"rspamd could not be reached: {exc}",
+                    unavailable=True,
+                )
+            ]
+        points, severity = _RSPAMD_ACTIONS.get(result["action"], (0, Severity.INFO))
+        return [
+            Finding(
+                signal="spam.rspamd",
+                points=points,
+                severity=severity,
+                message=f"rspamd spam score {result['score']:.1f} "
+                f"(reject at {result['required']:.1f}): action '{result['action']}'.",
+                evidence=result,
+            )
+        ]
