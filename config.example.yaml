@@ -49,6 +49,15 @@ intel:
   # rspamd for a real spam score, e.g. http://localhost:11333 (see README)
   rspamd_url: null
 
+# Hybrid Analysis sandbox for attachments that VirusTotal and Hybrid Analysis have never
+# seen. Needs PHISH_HYBRID_ANALYSIS_API_KEY and sandbox_upload other than "never".
+sandbox:
+  environment_id: 120          # 120 Windows 7 64-bit, 100 Windows 7 32-bit, 300 Linux 64-bit
+  max_file_mb: 20
+  timeout_minutes: 45
+  poll_interval_seconds: 30
+  share_third_party: false
+
 dashboard:
   host: 127.0.0.1
   port: 8000

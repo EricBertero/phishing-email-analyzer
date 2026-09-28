@@ -72,6 +72,16 @@ async def run_checks(intel: Intel) -> list[CheckResult]:
 
         results.append(await _check("virustotal", probe_virustotal))
 
+    if hybrid := intel.hybrid_analysis:
+
+        async def probe_hybrid() -> str:
+            report = await hybrid.overview(EICAR_SHA256)  # a lookup: nothing is uploaded
+            if report is None:
+                return "API key accepted (no report for the EICAR test file)"
+            return f"EICAR test file: verdict '{report['verdict']}'"
+
+        results.append(await _check("hybrid_analysis", probe_hybrid))
+
     if rspamd := intel.rspamd:
 
         async def probe_rspamd() -> str:

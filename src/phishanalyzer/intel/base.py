@@ -100,6 +100,7 @@ class IntelClient:
         self.cache = cache
         self.limiter = limiter or RateLimiter()
         self.cache_seconds = cache_seconds
+        self._inflight: dict[str, asyncio.Task[Any]] = {}
 
     async def cached(self, kind: str, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
         """Cache successful lookups, including "not found". Errors are never cached."""
@@ -107,9 +108,27 @@ class IntelClient:
         hit = self.cache.get(cache_key)
         if hit is not None:
             return hit["v"]  # wrapped so a cached None ("not found") is distinguishable
-        value = await fetch()
-        self.cache.set(cache_key, {"v": value}, self.cache_seconds)
-        return value
+
+        # Analyzers run concurrently and often ask about the same indicator (e.g. the
+        # VirusTotal and sandbox analyzers both look up an attachment hash). Share one
+        # in-flight lookup instead of spending rate-limited quota twice.
+        task = self._inflight.get(cache_key)
+        if task is None:
+
+            async def fill() -> Any:
+                value = await fetch()
+                self.cache.set(cache_key, {"v": value}, self.cache_seconds)
+                return value
+
+            task = asyncio.ensure_future(fill())
+            self._inflight[cache_key] = task
+            task.add_done_callback(lambda t: self._settle(cache_key, t))
+        return await asyncio.shield(task)
+
+    def _settle(self, cache_key: str, task: asyncio.Task[Any]) -> None:
+        self._inflight.pop(cache_key, None)
+        if not task.cancelled():
+            task.exception()  # mark retrieved: every waiter may have been cancelled
 
     async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         await self.limiter.acquire()

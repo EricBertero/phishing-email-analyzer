@@ -71,3 +71,73 @@ def test_scan_eml_survives_legacy_console_encoding(tmp_path):
     )
     assert result.returncode == 0, result.stderr.decode("cp1252", "replace")
     assert b"Giveaways" in result.stdout
+
+
+def _sandbox_config(tmp_path):
+    from phishanalyzer.storage import JobStatus, Store
+
+    db = tmp_path / "test.db"
+    (tmp_path / "config.yaml").write_text(f"paths:\n  db: {db.as_posix()}\n")
+    store = Store(db)
+    for i, name in enumerate(["invoice.pdf", "scan.doc"], start=1):
+        store.enqueue_job("gmail", f"m{i}", f"sha{i}", name, 2048, JobStatus.AWAITING_APPROVAL)
+    return store
+
+
+def test_sandbox_list_approve_and_reject(tmp_path, monkeypatch):
+    from phishanalyzer.storage import JobStatus
+
+    monkeypatch.chdir(tmp_path)
+    store = _sandbox_config(tmp_path)
+
+    listed = runner.invoke(app, ["sandbox", "list"])
+    assert listed.exit_code == 0, listed.output
+    assert "invoice.pdf" in listed.output and "awaiting_approval" in listed.output
+    assert "2 awaiting approval" in listed.output
+
+    approved = runner.invoke(app, ["sandbox", "approve", "1"])
+    assert "Approved 1 job(s)" in approved.output
+    assert store.get_job(1).status is JobStatus.PENDING
+    assert store.get_job(2).status is JobStatus.AWAITING_APPROVAL
+
+    rejected = runner.invoke(app, ["sandbox", "reject", "--all"])
+    assert "Rejected 1 job(s)" in rejected.output
+    assert store.get_job(2).status is JobStatus.REJECTED
+    assert store.get_job(1).status is JobStatus.PENDING  # already approved: untouched
+
+
+def test_sandbox_decision_needs_ids_or_all(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _sandbox_config(tmp_path)
+    result = runner.invoke(app, ["sandbox", "approve"])
+    assert result.exit_code == 2
+
+
+def test_sandbox_list_empty(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert "No open sandbox jobs" in runner.invoke(app, ["sandbox", "list"]).output
+
+
+def test_run_until_stopped_stops_worker_when_scanner_dies():
+    import asyncio
+
+    from phishanalyzer.cli import _run_until_stopped
+    from phishanalyzer.providers import AuthRequired
+
+    events = []
+
+    class Scanner:
+        async def run_forever(self, stop):
+            await asyncio.sleep(0.01)
+            raise AuthRequired("token revoked")
+
+    class Worker:
+        async def run_forever(self, stop):
+            await stop.wait()  # only ends when told to stop
+            events.append("worker stopped")
+
+    import pytest
+
+    with pytest.raises(AuthRequired, match="token revoked"):
+        asyncio.run(_run_until_stopped(Scanner(), Worker()))
+    assert events == ["worker stopped"]
