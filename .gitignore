@@ -1,10 +1,35 @@
-Gmail/credentials.json
-*.json
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets — never commit
+.env
+credentials.json
+token.json
 key.txt
-readme_last_hash.txt
-Data Acquisition/Data/readme_last_hash.txt
-Data Acquisition/Data/raw.githubusercontent.com_python_cpython_main_README.rst.txt
-Data Acquisition/Data/hash_blacklist.txt
-readme_last_hash.txt
-Data Acquisition/Data/readme_last_hash.txt
-Data Acquisition/Data/readme_last_hash.txt
+
+# Local config (copy from config.example.yaml)
+config.yaml
+
+# Runtime data
+data/
+*.db
+*.db-journal
+reports/
+samples/
+logs/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
