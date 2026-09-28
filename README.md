@@ -12,7 +12,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 ## Roadmap
 
 - [x] **1. Foundation**: package layout, config, core models, CLI, CI
-- [ ] **2. Offline core**: email parser and static analyzers, scoring, `phish scan-eml`
+- [x] **2. Offline core**: email parser and static analyzers, scoring, `phish scan-eml`
 - [ ] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
 - [ ] **4. Threat intel**: URLhaus, AbuseIPDB, Spamhaus DQS, VirusTotal
 - [ ] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
@@ -35,6 +35,31 @@ Configure:
    and a missing key simply disables that check.
 2. Optionally, `cp config.example.yaml config.yaml` to tune thresholds, weights and polling.
 3. Run `phish config` to see the effective configuration and which integrations are active.
+
+## Usage
+
+Analyse saved emails (`.eml`: in Gmail, use ⋮ → *Download message*). Nothing is sent
+anywhere:
+
+```bash
+phish scan-eml suspicious.eml            # score breakdown
+phish scan-eml *.eml --verbose           # include passed checks
+phish scan-eml suspicious.eml --json     # machine-readable
+```
+
+Forwarded emails work too: the original sender in the forwarded block is analysed as well.
+
+### Checks
+
+| Area | What it looks at |
+|---|---|
+| Authentication | SPF, DKIM (and alignment with From), DMARC, from the recipient server's `Authentication-Results` |
+| Sender identity | brand impersonation in the display name, lookalike domains (`paypa1`, `paypal-secure`), display name showing another address, Reply-To to another organisation, machine-generated domains, abused TLDs, punycode |
+| Origin | real sending IP taken from the trusted `Received` hop; residential/dynamic IPs |
+| Spam filters | SpamAssassin/rspamd `X-Spam-*` and Exchange SCL verdicts (spam-positive only) |
+| Content | credential requests, urgency, prize lures, payment lures (English and Italian); HTML forms |
+| Links | shown vs. real destination, raw IPs, shorteners, free hosting used for phishing pages, punycode, `user@host` tricks. Links are never opened |
+| Attachments | executables and scripts, double extensions, content that doesn't match its extension, Office macros, HTML/SVG pages, archives containing executables, password-protected archives |
 
 ## Scoring
 

@@ -40,7 +40,24 @@ class Url(BaseModel):
     url: str
     # Visible anchor text when the URL came from an HTML link; used to spot mismatches.
     display_text: str | None = None
-    source: str = "text"  # "text" | "html"
+    source: str = "text"  # "text" | "html" (link href) | "form" (form action)
+
+
+class ReceivedHop(BaseModel):
+    """One `Received:` header: the relay `from_*` handed the message to `by_host`."""
+
+    from_helo: str | None = None  # name the sender announced (unverified)
+    from_rdns: str | None = None  # reverse DNS of the connecting IP, as seen by the receiver
+    from_ip: str | None = None
+    by_host: str | None = None
+
+
+class ForwardedHeader(BaseModel):
+    """Original sender block of a forwarded message (`---------- Forwarded message ---`)."""
+
+    from_display: str | None = None
+    from_addr: str | None = None
+    subject: str | None = None
 
 
 class Email(BaseModel):
@@ -60,6 +77,12 @@ class Email(BaseModel):
     html_body: str = ""
     urls: list[Url] = Field(default_factory=list)
     attachments: list[Attachment] = Field(default_factory=list)
+    received: list[ReceivedHop] = Field(default_factory=list)  # newest (top) first
+    # Public IP that handed the message to the recipient's mail server: the only hop in
+    # the Received chain that is not under the sender's control.
+    sender_ip: str | None = None
+    sender_rdns: str | None = None
+    forwarded: ForwardedHeader | None = None
 
     def header(self, name: str) -> str | None:
         """First value of a header (case-insensitive), or None."""
