@@ -13,7 +13,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 
 - [x] **1. Foundation**: package layout, config, core models, CLI, CI
 - [x] **2. Offline core**: email parser and static analyzers, scoring, `phish scan-eml`
-- [ ] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
+- [x] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
 - [ ] **4. Threat intel**: URLhaus, AbuseIPDB, Spamhaus DQS, VirusTotal
 - [ ] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
 - [ ] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
@@ -36,7 +36,38 @@ Configure:
 2. Optionally, `cp config.example.yaml config.yaml` to tune thresholds, weights and polling.
 3. Run `phish config` to see the effective configuration and which integrations are active.
 
-## Usage
+## Watching Gmail
+
+One-time setup:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and
+   enable the **Gmail API**.
+2. Configure the **OAuth consent screen** (External, in testing mode), then add your own
+   Gmail address as a test user.
+3. Under **Credentials**, create an **OAuth client ID** of type **Desktop app**. Download
+   the JSON and save it as `credentials.json` in the project folder.
+4. Run `phish auth`. A browser window opens for you to sign in and approve access, and
+   the token is saved to `token.json`.
+
+The app asks only for the `gmail.modify` scope, which lets it read mail and change
+labels. It never sends or deletes mail.
+
+```bash
+phish run --dry-run --once   # scan the latest emails once, change nothing in Gmail
+phish run                    # keep watching; label new mail every poll_interval_seconds
+phish recent                 # verdicts stored in data/phishanalyzer.db
+phish recent --level critical
+```
+
+On the first run it scans the `backfill_count` most recent inbox messages. After that it
+reads Gmail's change history, so only new mail is scanned, and restarts don't rescan old
+mail. Each message gets one of the labels `Phish/Clean`, `Phish/Low`, `Phish/Suspicious`,
+`Phish/High` or `Phish/Critical`. Set `quarantine_critical: true` to also move Critical
+mail out of the inbox. If Gmail can't be reached, nothing is skipped: the scanner backs
+off and resumes from where it stopped. The database stores only headers, scores and
+findings, never message bodies or attachments.
+
+## Scanning files
 
 Analyse saved emails (`.eml`: in Gmail, use ⋮ → *Download message*). Nothing is sent
 anywhere:
