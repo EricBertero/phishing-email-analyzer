@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% from "_macros.html" import level_badge %}
+{% block title %}{{ row.subject or "Email" }} · Phishing Email Analyzer{% endblock %}
+{% block content %}
+<p class="small"><a href="/emails">&larr; All emails</a></p>
+<div class="page-head">
+  <div>
+    <h1>{{ row.subject or row.error or "(no subject)" }}</h1>
+    <div class="muted">{% if row.from_display %}{{ row.from_display }} &middot; {% endif %}<span class="mono">{{ row.from_addr or "" }}</span></div>
+  </div>
+  <div class="actions">
+    {% if can_rescan %}
+    <form class="inline" method="post" action="/emails/{{ row.id }}/rescan">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn" type="submit">Analyse again</button>
+    </form>
+    <form class="inline" method="post" action="/emails/{{ row.id }}/report">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn" type="submit">{{ "Rewrite report" if report else "Write report" }}</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if row.error %}
+<div class="notice error">This email could not be analysed: <span class="mono">{{ row.error }}</span></div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="stack">
+    <section class="card">
+      <div class="chart-head">
+        <div>
+          {{ level_badge(row.level.value if row.level else None, big=True) }}
+          {% if row.score is not none %}
+          <div class="score-bar" aria-hidden="true"><span class="bar-{{ (row.score // 10) * 10 }}"></span></div>
+          <div class="small muted">Score {{ row.score }} / 100{% if row.partial %} &middot; partial: some lookups were unavailable and will be retried{% endif %}</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Why</h2>
+      {% if scored %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th class="num">Points</th><th>Finding</th></tr></thead>
+          <tbody>
+          {% for f in scored %}
+            <tr>
+              <td class="num">{% if f.force_critical %}<span class="force">CRITICAL</span>{% else %}<span class="points">{{ f.points }}</span>{% endif %}</td>
+              <td>{{ f.message }}<div class="mono muted">{{ f.signal }}</div></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<p class="empty">No warning signs were found.</p>{% endif %}
+      {% if other %}
+      <details class="table-view">
+        <summary>{{ other | length }} other checks</summary>
+        <ul class="list">{% for f in other %}<li><span>{{ f.message }}</span>{% if f.unavailable %}<span class="tag">unavailable</span>{% endif %}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <h2>Report</h2>
+      {% if report %}
+      <p><a class="btn primary" href="/reports/{{ report.id }}" target="_blank" rel="noopener">Open report</a>
+         {% if report.pdf_path %}<a class="btn" href="/reports/{{ report.id }}/pdf" target="_blank" rel="noopener">PDF</a>{% endif %}</p>
+      <p class="small muted">Updated {{ report.updated_at | ago }}.
+        {% if report.ai_status == "ok" %}Includes an AI summary ({{ report.ai_model }}).{% else %}No AI summary ({{ report.ai_status }}).{% endif %}</p>
+      {% else %}
+      <p class="empty">No report yet.{% if not can_rescan and (not row.level or row.level.value != "critical") %} Reports are written automatically for Critical emails.{% endif %}</p>
+      {% endif %}
+    </section>
+
+    {% if jobs %}
+    <section class="card">
+      <h2>Sandbox</h2>
+      <ul class="list">
+      {% for job in jobs %}
+        <li>
+          <span><span class="mono">{{ job.filename or job.sha256[:12] }}</span><br>
+            <span class="small muted">{{ job.status.value | replace("_", " ") }}{% if job.verdict %} &middot; {{ job.verdict }}{% if job.threat_score is not none %} ({{ job.threat_score }}/100){% endif %}{% endif %}{% if job.error %} &middot; {{ job.error }}{% endif %}</span></span>
+          {% if job.status.value == "awaiting_approval" %}
+          <span class="actions">
+            {% for action, label in (("approve", "Upload"), ("reject", "Decline")) %}
+            <form class="inline" method="post" action="/sandbox/decide">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="job_id" value="{{ job.id }}">
+              <input type="hidden" name="action" value="{{ action }}">
+              <input type="hidden" name="next" value="/emails/{{ row.id }}">
+              <button class="btn{% if action == 'reject' %} danger{% endif %}" type="submit">{{ label }}</button>
+            </form>
+            {% endfor %}
+          </span>
+          {% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Details</h2>
+      <table class="data kv"><tbody>
+        <tr><td>Scanned</td><td>{{ row.scanned_at | stamp }}</td></tr>
+        {% if row.sent_at %}<tr><td>Sent</td><td>{{ row.sent_at | stamp }}</td></tr>{% endif %}
+        {% if row.sender_ip %}<tr><td>Sending server</td><td class="mono">{{ row.sender_ip }}</td></tr>{% endif %}
+        <tr><td>Source</td><td>{{ "Uploaded file" if row.provider == "upload" else row.provider | capitalize }}</td></tr>
+        {% if row.provider != "upload" %}<tr><td>Labelled in mailbox</td><td>{{ "Yes" if row.labeled else "Not yet" }}</td></tr>{% endif %}
+        {% if row.rechecks %}<tr><td>Re-checks</td><td>{{ row.rechecks }}</td></tr>{% endif %}
+        {% if row.message_id %}<tr><td>Message-ID</td><td class="mono">{{ row.message_id }}</td></tr>{% endif %}
+        <tr><td>Id</td><td class="mono">{{ row.provider_id }}</td></tr>
+      </tbody></table>
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Sandbox · Phishing Email Analyzer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Sandbox</h1>
+    <div class="muted">Attachments no service has seen before, for detonation in Hybrid Analysis</div>
+  </div>
+  <div class="chips" role="group" aria-label="Show">
+    <a class="chip" href="/sandbox" {% if show != "all" %}aria-current="true"{% endif %}>Open</a>
+    <a class="chip" href="/sandbox?show=all" {% if show == "all" %}aria-current="true"{% endif %}>All</a>
+  </div>
+</div>
+
+<div class="notice info">
+  {% if upload_mode == "never" %}Sandbox uploads are <strong>off</strong>: approving a file records your decision, but nothing is uploaded until <span class="mono">sandbox_upload</span> in config.yaml is set to <span class="mono">ask</span> or <span class="mono">always</span>.{% elif upload_mode == "ask" %}Sandbox uploads need <strong>your approval</strong>: each unknown file waits here until you upload or decline it.{% else %}Sandbox uploads are <strong>automatic</strong>: unknown files are uploaded without asking.{% endif %}
+  Uploading makes a file visible to other users of the sandbox service, so only approve files you are comfortable sharing.
+</div>
+
+<section class="card">
+  {% if jobs %}
+  {% if awaiting %}
+  <div class="actions">
+    {% for action, label in (("approve", "Upload all awaiting"), ("reject", "Decline all awaiting")) %}
+    <form class="inline" method="post" action="/sandbox/decide">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="{{ action }}">
+      <button class="btn{% if action == 'reject' %} danger{% endif %}" type="submit">{{ label }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>File</th><th>Status</th><th>Result</th><th>Email</th><th></th></tr></thead>
+      <tbody>
+      {% for job in jobs %}
+        {% set row = rows[(job.provider, job.provider_id)] %}
+        <tr>
+          <td><span class="mono">{{ job.filename or job.sha256[:12] }}</span><div class="small muted">{{ job.size | filesize }} &middot; {{ job.created_at | ago }}</div></td>
+          <td>{{ job.status.value | replace("_", " ") | capitalize }}</td>
+          <td>{% if job.verdict %}{{ job.verdict }}{% if job.threat_score is not none %} <span class="muted">({{ job.threat_score }}/100)</span>{% endif %}{% elif job.error %}<span class="muted">{{ job.error }}</span>{% endif %}</td>
+          <td>{% if row %}<a href="/emails/{{ row.id }}">{{ row.subject or "(no subject)" }}</a><div class="sender">{{ row.from_addr or "" }}</div>{% endif %}</td>
+          <td>
+            {% if job.status.value == "awaiting_approval" %}
+            <span class="actions">
+            {% for action, label in (("approve", "Upload"), ("reject", "Decline")) %}
+              <form class="inline" method="post" action="/sandbox/decide">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="job_id" value="{{ job.id }}">
+                <input type="hidden" name="action" value="{{ action }}">
+                <button class="btn{% if action == 'reject' %} danger{% endif %}" type="submit">{{ label }}</button>
+              </form>
+            {% endfor %}
+            </span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">{% if show == "all" %}No sandbox jobs yet.{% else %}Nothing open. <a href="/sandbox?show=all">Show all</a>.{% endif %}</p>
+  {% endif %}
+</section>
+{% endblock %}

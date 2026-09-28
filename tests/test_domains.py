@@ -59,3 +59,11 @@ def test_is_public_ip():
     assert not is_public_ip("10.0.0.1")
     assert not is_public_ip("127.0.0.1")
     assert not is_public_ip("mail.example.com")
+
+
+def test_unknown_tld_keeps_two_labels():
+    """Hosts whose TLD isn't on the Public Suffix List must not collapse together."""
+    assert registrable_domain("mail.poste-notifiche.example") == "poste-notifiche.example"
+    assert registrable_domain("a.supplier-invoices.example") == "supplier-invoices.example"
+    assert not same_org("poste-notifiche.example", "supplier-invoices.example")
+    assert registrable_domain("localhost") == "localhost"

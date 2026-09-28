@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -199,6 +200,9 @@ def run(
         bool, typer.Option("--dry-run", help="Analyse and log, but never modify Gmail")
     ] = False,
     once: Annotated[bool, typer.Option("--once", help="Poll a single time and exit")] = False,
+    dashboard: Annotated[
+        bool, typer.Option("--dashboard/--no-dashboard", help="Serve the web dashboard too")
+    ] = True,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     """Watch the inbox: scan new mail as it arrives and label it with its verdict."""
@@ -206,6 +210,8 @@ def run(
     settings = load_settings(config_path)
     if dry_run:
         settings.dry_run = True
+    if dashboard and not once:
+        _require_loopback(settings.dashboard.host)
     provider = _gmail(settings)
     store = Store(settings.paths.db)
     log = logging.getLogger("phishanalyzer")
@@ -249,7 +255,26 @@ def run(
                         sandbox.rescored,
                     )
             else:
-                await _run_until_stopped(scanner, worker)
+                serve = None
+                if dashboard:
+                    from phishanalyzer.web.app import Services, create_app
+
+                    web = create_app(
+                        Services(
+                            settings,
+                            store,
+                            upload_analyzers=build_analyzers(settings, intel),
+                            reporter=reporter,
+                            scanner=scanner,
+                        )
+                    )
+                    serve = _dashboard_runner(web, settings)
+                    log.info(
+                        "Dashboard: http://%s:%d",
+                        settings.dashboard.host,
+                        settings.dashboard.port,
+                    )
+                await _run_until_stopped(scanner, worker, serve)
         finally:
             await intel.aclose()
             await reporter.aclose()
@@ -263,20 +288,152 @@ def run(
         log.info("Stopped")
 
 
-async def _run_until_stopped(scanner: Scanner, worker: SandboxWorker | None) -> None:
-    """Run the mailbox poller and the sandbox worker side by side.
+async def _run_until_stopped(
+    scanner: Scanner,
+    worker: SandboxWorker | None,
+    dashboard: Callable[[asyncio.Event], Awaitable[None]] | None = None,
+) -> None:
+    """Run the mailbox poller, sandbox worker and dashboard side by side.
 
-    If one of them dies (e.g. Gmail access was revoked), stop the other and re-raise.
+    As soon as one of them ends, for any reason (Gmail access revoked, the dashboard
+    stopped by Ctrl+C), the others are stopped too; a failure is re-raised.
     """
     stop = asyncio.Event()
     tasks = [asyncio.create_task(scanner.run_forever(stop))]
     if worker:
         tasks.append(asyncio.create_task(worker.run_forever(stop)))
+    if dashboard:
+        tasks.append(asyncio.create_task(dashboard(stop)))
     try:
-        await asyncio.gather(*tasks)
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if not task.cancelled() and task.exception() is not None:
+                raise task.exception()
     finally:
         stop.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _require_loopback(host: str) -> None:
+    from phishanalyzer.web.security import is_loopback
+
+    if not is_loopback(host):
+        typer.secho(
+            f"Refusing to serve the dashboard on {host}: it has no login, so it must stay on "
+            "this computer. Use 127.0.0.1 (dashboard.host in config.yaml).",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+
+def _dashboard_runner(app_, settings: Settings, port: int | None = None):
+    """A coroutine factory serving `app_` with uvicorn until `stop` is set."""
+    import uvicorn
+
+    async def serve(stop: asyncio.Event) -> None:
+        config = uvicorn.Config(
+            app_,
+            host=settings.dashboard.host,
+            port=port or settings.dashboard.port,
+            log_level="warning",
+            lifespan="off",
+        )
+        server = uvicorn.Server(config)
+
+        async def guarded() -> None:
+            # uvicorn calls sys.exit() when it can't bind. SystemExit must be caught
+            # inside the task: asyncio re-raises it straight out of the event loop.
+            try:
+                await server.serve()
+            except SystemExit as exc:
+                raise RuntimeError(
+                    f"Could not start the dashboard on {config.host}:{config.port} "
+                    "(port in use? set dashboard.port or use --no-dashboard)"
+                ) from exc
+
+        task = asyncio.create_task(guarded())
+        stopper = asyncio.create_task(stop.wait())
+        try:
+            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            server.should_exit = True
+            stopper.cancel()
+        await task
+
+    return serve
+
+
+@app.command()
+def serve(
+    config_path: ConfigOption = None,
+    port: Annotated[int | None, typer.Option("--port", "-p", help="Port to listen on")] = None,
+    demo: Annotated[
+        bool,
+        typer.Option("--demo", help="Serve generated example data from a temporary database"),
+    ] = False,
+) -> None:
+    """Serve the web dashboard only (use `phish run` to also watch the inbox)."""
+    import tempfile
+
+    from phishanalyzer.providers.gmail import GmailProvider
+    from phishanalyzer.web.app import Services, create_app
+
+    _setup_logging()
+    settings = load_settings(config_path)
+    _require_loopback(settings.dashboard.host)
+    log = logging.getLogger("phishanalyzer")
+    if demo:
+        from phishanalyzer.web.demo import seed_sync
+
+        workdir = Path(tempfile.mkdtemp(prefix="phish-demo-"))
+        settings.paths.db = workdir / "demo.db"
+        settings.paths.reports = workdir / "reports"
+        settings.reports.pdf = False
+        settings.ai_summary.enabled = False
+        store = Store(settings.paths.db)
+        log.info("Generating demo data in %s", workdir)
+        seed_sync(settings, store)
+    else:
+        store = Store(settings.paths.db)
+
+    async def main() -> None:
+        intel = Intel(settings, cache=store.intel_cache())
+        reporter = Reporter(settings, store, Summarizer(settings))
+        scanner = None
+        if not demo:
+            try:
+                provider = GmailProvider.from_settings(settings)
+            except AuthRequired:
+                log.info("Gmail not authorised: re-analysing from the dashboard is disabled")
+            else:
+                analyzers = build_analyzers(settings, intel, store, provider.name)
+                scanner = Scanner(settings, provider, store, analyzers, reporter)
+        web = create_app(
+            Services(
+                settings,
+                store,
+                upload_analyzers=build_analyzers(settings, intel),
+                reporter=reporter,
+                scanner=scanner,
+            )
+        )
+        log.info(
+            "Dashboard: http://%s:%d", settings.dashboard.host, port or settings.dashboard.port
+        )
+        try:
+            await _dashboard_runner(web, settings, port)(asyncio.Event())
+        finally:
+            await intel.aclose()
+            await reporter.aclose()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Stopped")
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command("report")
