@@ -83,6 +83,8 @@ class Email(BaseModel):
     sender_ip: str | None = None
     sender_rdns: str | None = None
     forwarded: ForwardedHeader | None = None
+    # Original RFC 822 bytes, for checks that need the whole message (rspamd).
+    raw: bytes = Field(default=b"", exclude=True, repr=False)
 
     def header(self, name: str) -> str | None:
         """First value of a header (case-insensitive), or None."""

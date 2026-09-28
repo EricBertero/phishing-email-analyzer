@@ -14,7 +14,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 - [x] **1. Foundation**: package layout, config, core models, CLI, CI
 - [x] **2. Offline core**: email parser and static analyzers, scoring, `phish scan-eml`
 - [x] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
-- [ ] **4. Threat intel**: URLhaus, AbuseIPDB, Spamhaus DQS, VirusTotal
+- [x] **4. Threat intel**: URLhaus, Spamhaus DQS, AbuseIPDB, VirusTotal, optional rspamd
 - [ ] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
 - [ ] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
 - [ ] **7. Dashboard**: FastAPI web UI
@@ -69,13 +69,13 @@ findings, never message bodies or attachments.
 
 ## Scanning files
 
-Analyse saved emails (`.eml`: in Gmail, use ⋮ → *Download message*). Nothing is sent
-anywhere:
+Analyse saved emails (`.eml`: in Gmail, use ⋮ → *Download message*):
 
 ```bash
 phish scan-eml suspicious.eml            # score breakdown
 phish scan-eml *.eml --verbose           # include passed checks
 phish scan-eml suspicious.eml --json     # machine-readable
+phish scan-eml suspicious.eml --offline  # no threat-intel lookups: nothing leaves the machine
 ```
 
 Forwarded emails work too: the original sender in the forwarded block is analysed as well.
@@ -91,6 +91,44 @@ Forwarded emails work too: the original sender in the forwarded block is analyse
 | Content | credential requests, urgency, prize lures, payment lures (English and Italian); HTML forms |
 | Links | shown vs. real destination, raw IPs, shorteners, free hosting used for phishing pages, punycode, `user@host` tricks. Links are never opened |
 | Attachments | executables and scripts, double extensions, content that doesn't match its extension, Office macros, HTML/SVG pages, archives containing executables, password-protected archives |
+| Threat intel | see below: link, domain, IP and attachment reputation; a real spam score |
+
+## Threat intel
+
+Every service is optional and free for personal use. Add the keys you have to `.env`
+(see `.env.example`), then check them:
+
+```bash
+phish doctor
+```
+
+`doctor` queries each configured service with a known test indicator: the EICAR test file
+on VirusTotal, and Spamhaus's permanent test listings.
+
+| Service | What it checks | Free tier |
+|---|---|---|
+| [URLhaus](https://auth.abuse.ch/) | links and their hosts against known malware-distribution URLs. A **live** URL forces Critical | generous |
+| [Spamhaus DQS](https://www.spamhaus.com/free-trial/sign-up-for-a-free-data-query-service-account/) | sending IP (ZEN) and sender/link domains (DBL) over DNS. A link domain listed for phishing or malware forces Critical, and so does a DBL-listed sender that also fails DMARC | non-commercial use |
+| [AbuseIPDB](https://www.abuseipdb.com/account/api) | community abuse reports for the sending IP | 1,000/day |
+| [VirusTotal](https://www.virustotal.com/gui/my-apikey) | attachment hashes first, then up to `vt_max_urls_per_email` links. An attachment or link flagged by `vt_malicious_threshold` engines forces Critical | 4/min, 500/day |
+| rspamd (self-hosted) | a real spam score from a full spam filter: Bayes, fuzzy hashes, RBLs | unlimited |
+
+Results are cached in the database (`intel.cache_hours`), so restarts don't use up quota.
+When a service is down or its quota is used up, the verdict is marked *partial*. Partial
+verdicts are re-checked automatically (up to 3 times over the next two days), and the
+label is updated if the verdict changes.
+
+To get a real spam score, run rspamd in Docker and point the analyzer at it:
+
+```bash
+docker run -d --name rspamd -p 11333:11333 rspamd/rspamd
+```
+
+```yaml
+# config.yaml
+intel:
+  rspamd_url: http://localhost:11333
+```
 
 ## Scoring
 
@@ -105,8 +143,10 @@ score is their sum, capped at 100:
 | High       | 60–79  |
 | Critical   | 80–100 |
 
-Some indicators force **Critical** whatever the score: an attachment flagged by several
-VirusTotal engines, a malicious sandbox verdict, or a URL that is live in URLhaus.
+Some indicators force **Critical** whatever the score: an attachment or link flagged by
+several VirusTotal engines, a URL that is live in URLhaus, a link domain listed by Spamhaus
+for phishing or malware, a DBL-listed sender that also fails DMARC, or (Phase 5) a
+malicious sandbox verdict.
 Thresholds and per-signal weights can be changed in `config.yaml`.
 
 ## Privacy
@@ -115,6 +155,9 @@ Thresholds and per-signal weights can be changed in `config.yaml`.
   those services. Uploads are **off by default** (`sandbox_upload: never`); hash lookups
   are always private.
 - Links in emails are never opened. URL checks are reputation lookups only.
+- Threat-intel services receive indicators only: URLs, domains, the sending IP and
+  attachment hashes. They never get message text or attachments. Use
+  `scan-eml --offline` to keep everything local.
 - The AI summary gets the findings, the headers and a short redacted body excerpt. It
   never gets attachments.
 

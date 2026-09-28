@@ -71,6 +71,16 @@ def signals(findings: list[Finding]) -> set[str]:
     return {f.signal for f in findings if f.points > 0 or f.force_critical}
 
 
+@pytest.fixture(autouse=True)
+def _no_real_api_keys(monkeypatch):
+    """Tests must never hit real services with a developer's keys from the environment."""
+    import os
+
+    for var in list(os.environ):
+        if var.startswith("PHISH_") or var == "ANTHROPIC_API_KEY":
+            monkeypatch.delenv(var)
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(secrets=Secrets(_env_file=None))

@@ -62,6 +62,20 @@ class Dashboard(BaseModel):
     port: int = 8000
 
 
+class Intel(BaseModel):
+    """Threat-intel lookups. Each service is enabled by its API key in .env."""
+
+    timeout_seconds: float = Field(default=10, gt=0)
+    # Unique link hosts checked per email (URLhaus, Spamhaus DBL).
+    max_hosts_per_email: int = Field(default=10, ge=0)
+    # VirusTotal's free tier allows 4 lookups/min and 500/day: attachments come first,
+    # then at most this many links per email.
+    vt_max_urls_per_email: int = Field(default=2, ge=0)
+    cache_hours: float = Field(default=12, ge=0)
+    # rspamd normal worker, e.g. http://localhost:11333 (see README). Off when empty.
+    rspamd_url: str | None = None
+
+
 class AiSummary(BaseModel):
     enabled: bool = True
     model: str = "claude-sonnet-5"
@@ -97,17 +111,25 @@ class Settings(BaseModel):
     weights: dict[str, int] = Field(default_factory=dict)
     paths: Paths = Field(default_factory=Paths)
     dashboard: Dashboard = Field(default_factory=Dashboard)
+    intel: Intel = Field(default_factory=Intel)
     ai_summary: AiSummary = Field(default_factory=AiSummary)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 
     def configured_integrations(self) -> dict[str, bool]:
-        """Which API-backed integrations have a key set."""
-        return {
+        """Which external integrations are enabled (have a key / URL set)."""
+        integrations = {
             name.removesuffix("_api_key").removesuffix("_auth_key").removesuffix("_key"): (
                 value is not None and bool(value.get_secret_value())
             )
             for name, value in self.secrets
         }
+        integrations["rspamd"] = bool(self.intel.rspamd_url)
+        return integrations
+
+    def secret(self, name: str) -> str | None:
+        """Value of an API key from Secrets, or None when unset/empty."""
+        value: SecretStr | None = getattr(self.secrets, name)
+        return value.get_secret_value() or None if value is not None else None
 
 
 def load_settings(config_path: Path | None = None, secrets: Secrets | None = None) -> Settings:

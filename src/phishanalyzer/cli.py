@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import astuple
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +16,9 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 from phishanalyzer import __version__
-from phishanalyzer.config import load_settings
+from phishanalyzer.analyzers import build_analyzers
+from phishanalyzer.config import Settings, load_settings
+from phishanalyzer.intel import Intel
 from phishanalyzer.models import Level
 from phishanalyzer.parsing import parse_file
 from phishanalyzer.pipeline import analyze_email
@@ -44,6 +46,11 @@ def main(
     ] = False,
 ) -> None:
     """Phishing Email Analyzer."""
+    # Email subjects are full of emoji and exotic characters; a Windows console or a
+    # pipe with a legacy code page must print '?' for them, never crash.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
 
 
 _LEVEL_STYLE = {
@@ -65,15 +72,19 @@ def scan_eml(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="Also show passed/informational checks")
     ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Skip threat-intel lookups: nothing leaves this machine"),
+    ] = False,
 ) -> None:
-    """Analyse local .eml files and print the score breakdown. Nothing is sent anywhere."""
+    """Analyse local .eml files and print the score breakdown.
+
+    Configured threat-intel services are queried with the email's indicators (URLs,
+    domains, IPs, attachment hashes) unless --offline is given.
+    """
     settings = load_settings(config_path)
     console = Console()
-    results = []
-    for path in files:
-        email = parse_file(path)
-        verdict = asyncio.run(analyze_email(email, settings))
-        results.append((path, email, verdict))
+    results = asyncio.run(_scan_files(files, settings, offline))
 
     if as_json:
         payload = [
@@ -139,6 +150,20 @@ def _gmail(settings, interactive: bool = False):
         raise typer.Exit(1) from exc
 
 
+async def _scan_files(files: list[Path], settings: Settings, offline: bool):
+    intel = None if offline else Intel(settings)
+    analyzers = build_analyzers(settings, intel)
+    try:
+        results = []
+        for path in files:
+            email = parse_file(path)
+            results.append((path, email, await analyze_email(email, settings, analyzers)))
+        return results
+    finally:
+        if intel:
+            await intel.aclose()
+
+
 @app.command()
 def auth(config_path: ConfigOption = None) -> None:
     """Authorise access to your Gmail account (opens a browser window)."""
@@ -163,7 +188,6 @@ def run(
         settings.dry_run = True
     provider = _gmail(settings)
     store = Store(settings.paths.db)
-    scanner = Scanner(settings, provider, store)
     log = logging.getLogger("phishanalyzer")
     log.info(
         "Watching %s every %ds%s",
@@ -171,12 +195,28 @@ def run(
         settings.poll_interval_seconds,
         " (dry run: Gmail will not be modified)" if settings.dry_run else "",
     )
+
+    async def main() -> None:
+        intel = Intel(settings, cache=store.intel_cache())
+        log.info("Threat intel: %s", ", ".join(intel.enabled) or "none configured (offline)")
+        scanner = Scanner(settings, provider, store, build_analyzers(settings, intel))
+        try:
+            if once:
+                result = await scanner.poll_once()
+                log.info(
+                    "Scanned %d, skipped %d, failed %d, re-checked %d",
+                    result.scanned,
+                    result.skipped,
+                    result.failed,
+                    result.rechecked,
+                )
+            else:
+                await scanner.run_forever()
+        finally:
+            await intel.aclose()
+
     try:
-        if once:
-            result = asyncio.run(scanner.poll_once())
-            log.info("Scanned %d, skipped %d, failed %d", *astuple(result)[:3])
-        else:
-            asyncio.run(scanner.run_forever())
+        asyncio.run(main())
     except AuthRequired as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(1) from exc
@@ -209,10 +249,38 @@ def recent(
 
 
 @app.command()
+def doctor(config_path: ConfigOption = None) -> None:
+    """Check that each configured threat-intel service is reachable and its key works."""
+    from phishanalyzer.intel.doctor import run_checks
+
+    settings = load_settings(config_path)
+
+    async def main():
+        intel = Intel(settings)
+        try:
+            return intel.enabled, await run_checks(intel)
+        finally:
+            await intel.aclose()
+
+    enabled, results = asyncio.run(main())
+    if not enabled:
+        typer.echo("No threat-intel services configured. Add API keys to .env (see .env.example).")
+        return
+    for result in results:
+        mark = "[green]OK  [/]" if result.ok else "[red]FAIL[/]"
+        Console().print(f"{mark} {result.service}: {result.detail}")
+    missing = [n for n, on in settings.configured_integrations().items() if not on]
+    if missing:
+        typer.echo(f"Not configured: {', '.join(missing)}")
+    if not all(r.ok for r in results):
+        raise typer.Exit(1)
+
+
+@app.command()
 def config(config_path: ConfigOption = None) -> None:
     """Show the effective configuration and which integrations have API keys."""
     settings = load_settings(config_path)
     typer.echo(yaml.safe_dump(settings.model_dump(mode="json"), sort_keys=False).rstrip())
     typer.echo("\nintegrations:")
     for name, configured in settings.configured_integrations().items():
-        typer.echo(f"  {name}: {'configured' if configured else 'missing key (disabled)'}")
+        typer.echo(f"  {name}: {'configured' if configured else 'not configured (disabled)'}")

@@ -38,6 +38,17 @@ paths:
   gmail_credentials: credentials.json
   gmail_token: token.json
 
+# Threat-intel lookups (URLhaus, Spamhaus, AbuseIPDB, VirusTotal); each is enabled by
+# its API key in .env. Indicators (URLs, domains, IPs, file hashes) are sent to these
+# services; message content never is.
+intel:
+  timeout_seconds: 10
+  max_hosts_per_email: 10
+  vt_max_urls_per_email: 2
+  cache_hours: 12
+  # rspamd for a real spam score, e.g. http://localhost:11333 (see README)
+  rspamd_url: null
+
 dashboard:
   host: 127.0.0.1
   port: 8000
