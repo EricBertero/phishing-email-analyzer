@@ -15,7 +15,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 - [x] **2. Offline core**: email parser and static analyzers, scoring, `phish scan-eml`
 - [x] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
 - [x] **4. Threat intel**: URLhaus, Spamhaus DQS, AbuseIPDB, VirusTotal, optional rspamd
-- [ ] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
+- [x] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
 - [ ] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
 - [ ] **7. Dashboard**: FastAPI web UI
 
@@ -111,12 +111,50 @@ on VirusTotal, and Spamhaus's permanent test listings.
 | [Spamhaus DQS](https://www.spamhaus.com/free-trial/sign-up-for-a-free-data-query-service-account/) | sending IP (ZEN) and sender/link domains (DBL) over DNS. A link domain listed for phishing or malware forces Critical, and so does a DBL-listed sender that also fails DMARC | non-commercial use |
 | [AbuseIPDB](https://www.abuseipdb.com/account/api) | community abuse reports for the sending IP | 1,000/day |
 | [VirusTotal](https://www.virustotal.com/gui/my-apikey) | attachment hashes first, then up to `vt_max_urls_per_email` links. An attachment or link flagged by `vt_malicious_threshold` engines forces Critical | 4/min, 500/day |
+| [Hybrid Analysis](https://www.hybrid-analysis.com/my-account?tab=%23api-key-tab) | existing sandbox reports for attachment hashes (a private lookup); also the sandbox itself, see below | free key |
 | rspamd (self-hosted) | a real spam score from a full spam filter: Bayes, fuzzy hashes, RBLs | unlimited |
 
 Results are cached in the database (`intel.cache_hours`), so restarts don't use up quota.
 When a service is down or its quota is used up, the verdict is marked *partial*. Partial
 verdicts are re-checked automatically (up to 3 times over the next two days), and the
 label is updated if the verdict changes.
+
+### Sandbox
+
+An attachment that neither VirusTotal nor Hybrid Analysis has ever seen is the case a
+hash lookup can't help with. Such files can be detonated in the Hybrid Analysis sandbox,
+which reports a verdict (`malicious` forces **Critical**, `suspicious` adds points).
+
+**Uploading a file makes it visible to other users of the service**, and attachments are
+often private documents, so this is controlled by `sandbox_upload` in `config.yaml`:
+
+| Setting | What happens to an unknown attachment |
+|---|---|
+| `never` (default) | nothing is uploaded; the email is scored on the static checks and lookups |
+| `ask` | the file is queued and waits until you approve it |
+| `always` | the file is uploaded automatically |
+
+```bash
+phish sandbox list          # jobs waiting for approval (or in progress)
+phish sandbox approve 3     # or: approve --all
+phish sandbox reject 4      # or: reject --all
+```
+
+What is never uploaded: files VirusTotal already knows (their verdict comes from
+VirusTotal), images and plain text, files over `sandbox.max_file_mb`, files from local
+`.eml` scans, and anything during `--dry-run`. Samples are sent with Hybrid Analysis's
+"do not share with third parties" flag and without community access, unless you set
+`sandbox.share_third_party: true`. The original file name is sent, since the analysis
+depends on the extension.
+
+The email is scored right away with what is known and labelled as usual. The sandbox
+takes minutes; when it finishes, `phish run` re-scores the email and updates its Gmail
+label, so a file that turns out to be malware moves the email to `Phish/Critical`.
+Attachments are never stored: the worker fetches the message again from Gmail when it is
+time to upload, and keeps the file in memory only.
+
+Run `phish doctor` to check the key. This part of the client was written from the API
+documentation and integrations that use it, and has not yet been run against a live key.
 
 To get a real spam score, run rspamd in Docker and point the analyzer at it:
 
@@ -145,8 +183,8 @@ score is their sum, capped at 100:
 
 Some indicators force **Critical** whatever the score: an attachment or link flagged by
 several VirusTotal engines, a URL that is live in URLhaus, a link domain listed by Spamhaus
-for phishing or malware, a DBL-listed sender that also fails DMARC, or (Phase 5) a
-malicious sandbox verdict.
+for phishing or malware, a DBL-listed sender that also fails DMARC, or a malicious
+sandbox verdict.
 Thresholds and per-signal weights can be changed in `config.yaml`.
 
 ## Privacy
@@ -155,9 +193,11 @@ Thresholds and per-signal weights can be changed in `config.yaml`.
   those services. Uploads are **off by default** (`sandbox_upload: never`); hash lookups
   are always private.
 - Links in emails are never opened. URL checks are reputation lookups only.
-- Threat-intel services receive indicators only: URLs, domains, the sending IP and
-  attachment hashes. They never get message text or attachments. Use
-  `scan-eml --offline` to keep everything local.
+- Threat-intel lookups send indicators only: URLs, domains, the sending IP and attachment
+  hashes. They never get message text or attachments. Use `scan-eml --offline` to keep
+  everything local.
+- The one exception is the sandbox, which receives an attachment only if you allow it
+  (`sandbox_upload`, default `never`). Message text is never sent. See [Sandbox](#sandbox).
 - The AI summary gets the findings, the headers and a short redacted body excerpt. It
   never gets attachments.
 

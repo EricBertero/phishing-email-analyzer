@@ -7,6 +7,7 @@ Datetimes are timezone-aware UTC.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,52 @@ class PollState(SQLModel, table=True):
     provider: str = Field(primary_key=True)
     cursor: str
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class JobStatus(StrEnum):
+    AWAITING_APPROVAL = (
+        "awaiting_approval"  # sandbox_upload: ask; waits for `phish sandbox approve`
+    )
+    PENDING = "pending"  # approved / allowed; waiting to be uploaded
+    SUBMITTED = "submitted"  # uploaded; waiting for the sandbox to finish
+    DONE = "done"
+    FAILED = "failed"
+    REJECTED = "rejected"  # the user declined the upload
+
+
+ACTIVE_JOB_STATUSES = (JobStatus.AWAITING_APPROVAL, JobStatus.PENDING, JobStatus.SUBMITTED)
+# Jobs that changed the picture of an email and whose message must be re-analysed once.
+SETTLED_JOB_STATUSES = (JobStatus.DONE, JobStatus.FAILED, JobStatus.REJECTED)
+
+
+class SandboxJob(SQLModel, table=True):
+    """One attachment of one email queued for sandbox detonation.
+
+    The file itself is never stored: the worker re-fetches the message from the mailbox
+    and picks the attachment by its sha256 when it is time to upload.
+    """
+
+    __tablename__ = "sandbox_jobs"
+    __table_args__ = (UniqueConstraint("provider", "provider_id", "sha256"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider: str = Field(index=True)
+    provider_id: str
+    sha256: str = Field(index=True)
+    filename: str | None = None
+    size: int = 0
+    status: JobStatus = Field(default=JobStatus.PENDING, index=True)
+    environment_id: int | None = None
+    sandbox_job_id: str | None = None  # Hybrid Analysis job id
+    created_at: datetime = Field(default_factory=utcnow)
+    submitted_at: datetime | None = None
+    finished_at: datetime | None = None
+    verdict: str | None = None
+    threat_score: int | None = None
+    result: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+    error: str | None = None
+    # True once the email was re-analysed with this job's outcome.
+    applied: bool = False
 
 
 class IntelCacheEntry(SQLModel, table=True):
@@ -218,6 +265,106 @@ class Store:
                 .limit(limit)
             )
             return list(s.exec(query))
+
+    def get_row(self, provider: str, provider_id: str) -> ScannedEmail | None:
+        with Session(self.engine) as s:
+            return s.exec(self._by_id(provider, provider_id)).first()
+
+    # --- sandbox jobs --------------------------------------------------------------------
+    def enqueue_job(
+        self,
+        provider: str,
+        provider_id: str,
+        sha256: str,
+        filename: str | None,
+        size: int,
+        status: JobStatus,
+    ) -> SandboxJob:
+        """Queue an attachment. Idempotent: an existing job for it is returned unchanged."""
+        with Session(self.engine) as s:
+            existing = s.exec(self._job_query(provider, provider_id, sha256)).first()
+            if existing:
+                return existing
+            job = SandboxJob(
+                provider=provider,
+                provider_id=provider_id,
+                sha256=sha256,
+                filename=filename,
+                size=size,
+                status=status,
+            )
+            s.add(job)
+            s.commit()
+            s.refresh(job)
+            return job
+
+    def get_job(self, job_id: int) -> SandboxJob | None:
+        with Session(self.engine) as s:
+            return s.get(SandboxJob, job_id)
+
+    def job_for(self, provider: str, provider_id: str, sha256: str) -> SandboxJob | None:
+        with Session(self.engine) as s:
+            return s.exec(self._job_query(provider, provider_id, sha256)).first()
+
+    def finished_job_by_sha(self, sha256: str) -> SandboxJob | None:
+        """A completed analysis of this exact file, from any email (results are reusable)."""
+        with Session(self.engine) as s:
+            query = (
+                select(SandboxJob)
+                .where(SandboxJob.sha256 == sha256, SandboxJob.status == JobStatus.DONE)
+                .order_by(SandboxJob.id.desc())
+            )
+            return s.exec(query).first()
+
+    def jobs(
+        self,
+        provider: str | None = None,
+        statuses: tuple[JobStatus, ...] | None = None,
+        limit: int = 100,
+        only_unapplied: bool = False,
+    ) -> list[SandboxJob]:
+        with Session(self.engine) as s:
+            query = select(SandboxJob).order_by(SandboxJob.id).limit(limit)
+            if provider:
+                query = query.where(SandboxJob.provider == provider)
+            if statuses:
+                query = query.where(SandboxJob.status.in_(statuses))  # type: ignore[attr-defined]
+            if only_unapplied:
+                query = query.where(SandboxJob.applied == False)  # noqa: E712 (SQL expression)
+            return list(s.exec(query))
+
+    def update_job(self, job_id: int, **fields: Any) -> SandboxJob | None:
+        with Session(self.engine) as s:
+            job = s.get(SandboxJob, job_id)
+            if job is None:
+                return None
+            for name, value in fields.items():
+                setattr(job, name, value)
+            s.add(job)
+            s.commit()
+            s.refresh(job)
+            return job
+
+    def decide_jobs(self, approve: bool, job_ids: list[int] | None = None) -> int:
+        """Approve or reject jobs awaiting approval (all of them when `job_ids` is None)."""
+        with Session(self.engine) as s:
+            query = select(SandboxJob).where(SandboxJob.status == JobStatus.AWAITING_APPROVAL)
+            if job_ids is not None:
+                query = query.where(SandboxJob.id.in_(job_ids))  # type: ignore[union-attr]
+            jobs = list(s.exec(query))
+            for job in jobs:
+                job.status = JobStatus.PENDING if approve else JobStatus.REJECTED
+                s.add(job)
+            s.commit()
+            return len(jobs)
+
+    @staticmethod
+    def _job_query(provider: str, provider_id: str, sha256: str):
+        return select(SandboxJob).where(
+            SandboxJob.provider == provider,
+            SandboxJob.provider_id == provider_id,
+            SandboxJob.sha256 == sha256,
+        )
 
     def recent(self, limit: int = 20, level: Level | None = None) -> list[ScannedEmail]:
         with Session(self.engine) as s:
