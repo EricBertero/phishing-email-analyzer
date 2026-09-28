@@ -1,0 +1,47 @@
+# Copy to config.yaml to customise. Every key is optional; defaults are shown.
+
+# How often to poll Gmail for new mail, and how many recent messages to scan on first run.
+poll_interval_seconds: 60
+backfill_count: 25
+
+# Analyse and log decisions, but never write labels or move mail in Gmail.
+dry_run: false
+
+# Label prefix in Gmail, e.g. "Phish/Critical".
+label_prefix: Phish
+
+# Move Critical mail out of the inbox (it keeps its label and stays in All Mail).
+quarantine_critical: false
+
+# Uploading a file to VirusTotal / Hybrid Analysis makes it visible to other users of
+# those services. Hash lookups are always private. never | ask | always
+sandbox_upload: never
+
+# Minimum score for each level (score is 0-100). Below `low` is Clean.
+thresholds:
+  low: 20
+  suspicious: 40
+  high: 60
+  critical: 80
+
+# Number of VirusTotal engines flagging an attachment as malicious that forces Critical.
+vt_malicious_threshold: 3
+
+# Override the points of individual signals, e.g.
+# weights:
+#   auth.dmarc_fail: 25
+weights: {}
+
+paths:
+  db: data/phishanalyzer.db
+  reports: reports
+  gmail_credentials: credentials.json
+  gmail_token: token.json
+
+dashboard:
+  host: 127.0.0.1
+  port: 8000
+
+ai_summary:
+  enabled: true
+  model: claude-sonnet-5
