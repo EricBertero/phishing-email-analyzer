@@ -62,6 +62,16 @@ dashboard:
   host: 127.0.0.1
   port: 8000
 
+# HTML (+ PDF) incident reports for emails at or above min_level.
+reports:
+  min_level: critical
+  pdf: true
+
+# Plain-language summary in each report, written by Claude (needs ANTHROPIC_API_KEY).
+# Claude only explains the findings; it never decides or changes the verdict.
 ai_summary:
   enabled: true
-  model: claude-sonnet-5
+  model: claude-opus-5-5
+  effort: low
+  timeout_seconds: 90
+  max_excerpt_chars: 1500
