@@ -92,9 +92,27 @@ class Intel(BaseModel):
     rspamd_url: str | None = None
 
 
+class Reports(BaseModel):
+    """HTML/PDF incident reports, written to `paths.reports`."""
+
+    # Emails at or above this level get a report automatically.
+    min_level: Level = Level.CRITICAL
+    pdf: bool = True
+
+
 class AiSummary(BaseModel):
+    """Plain-language analyst summary written by Claude for each report.
+
+    Needs ANTHROPIC_API_KEY (or an `ant auth login` profile). The verdict itself is never
+    decided by the model: it only explains the findings the analyzers produced.
+    """
+
     enabled: bool = True
-    model: str = "claude-sonnet-5"
+    model: str = "claude-opus-5-5"
+    effort: str = Field(default="low", pattern="^(low|medium|high|xhigh|max)$")
+    timeout_seconds: float = Field(default=90, gt=0)
+    # Characters of the (redacted) message body the model may read.
+    max_excerpt_chars: int = Field(default=1500, ge=0, le=10_000)
 
 
 class Secrets(BaseSettings):
@@ -129,6 +147,7 @@ class Settings(BaseModel):
     dashboard: Dashboard = Field(default_factory=Dashboard)
     intel: Intel = Field(default_factory=Intel)
     sandbox: Sandbox = Field(default_factory=Sandbox)
+    reports: Reports = Field(default_factory=Reports)
     ai_summary: AiSummary = Field(default_factory=AiSummary)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 

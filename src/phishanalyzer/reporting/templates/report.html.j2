@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phishing report: {{ level_label }} ({{ score }}/100)</title>
+{#- Deliberately plain CSS: the same template is rendered to PDF by xhtml2pdf, which
+    supports blocks and tables but not flexbox or grid. -#}
+<style>
+  @page { size: a4; margin: 1.6cm 1.4cm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1f2328;
+         line-height: 1.45; margin: 0; background: #ffffff; }
+  .page { max-width: 860px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 17pt; margin: 0 0 4px 0; }
+  h2 { font-size: 12pt; margin: 22px 0 8px 0; padding-bottom: 3px;
+       border-bottom: 1px solid #d0d7de; -pdf-keep-with-next: true; }
+  .muted { color: #59636e; }
+  .small { font-size: 8.5pt; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-weight: bold;
+           color: #ffffff; letter-spacing: 0.5px; }
+  .clean { background: #1a7f37; } .low { background: #0969da; }
+  .suspicious { background: #9a6700; } .high { background: #bc4c00; }
+  .critical { background: #b42318; }
+  table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+  th, td { text-align: left; vertical-align: top; padding: 4px 6px;
+           border-bottom: 1px solid #eaeef2; }
+  th { font-size: 8.5pt; color: #59636e; text-transform: uppercase; }
+  td.num, th.num { text-align: right; white-space: nowrap; width: 48px; padding-right: 12px; }
+  td.key { width: 150px; color: #59636e; }
+  .mono { font-family: Courier, monospace; font-size: 8.5pt; word-wrap: break-word; }
+  .force { color: #b42318; font-weight: bold; }
+  .box { border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; margin: 6px 0; }
+  .ai { border-left: 4px solid #8250df; background: #fbf8ff; }
+  ul { margin: 4px 0 4px 18px; padding: 0; }
+  li { margin: 2px 0; }
+  .footer { margin-top: 28px; padding-top: 8px; border-top: 1px solid #d0d7de; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<p class="muted small">Phishing Email Analyzer &middot; incident report &middot; generated {{ generated_at }}</p>
+<h1>{{ subject or "(no subject)" }}</h1>
+<p>
+  <span class="badge {{ level }}">{{ level_label }}</span>
+  &nbsp;<strong>{{ score }}/100</strong>
+  {% if partial %}<span class="muted">&nbsp;(some checks were unavailable; the verdict may still change)</span>{% endif %}
+</p>
+
+<table>
+  <tr><td class="key">From</td><td>{{ from_display or "" }} <span class="mono">{{ from_addr }}</span></td></tr>
+  {% if forwarded_from %}<tr><td class="key">Originally from</td><td><span class="mono">{{ forwarded_from }}</span> (forwarded message)</td></tr>{% endif %}
+  {% if reply_to %}<tr><td class="key">Reply-To</td><td class="mono">{{ reply_to }}</td></tr>{% endif %}
+  {% if return_path %}<tr><td class="key">Return-Path</td><td class="mono">{{ return_path }}</td></tr>{% endif %}
+  <tr><td class="key">To</td><td class="mono">{{ to }}</td></tr>
+  <tr><td class="key">Sent</td><td>{{ sent_at or "unknown" }}</td></tr>
+  {% if sender_ip %}<tr><td class="key">Sending server</td><td class="mono">{{ sender_ip }}{% if sender_rdns %} ({{ sender_rdns }}){% endif %}</td></tr>{% endif %}
+  {% if message_id %}<tr><td class="key">Message-ID</td><td class="mono">{{ message_id }}</td></tr>{% endif %}
+</table>
+
+<h2>Summary</h2>
+{% if ai %}
+<div class="box ai">
+  <p><strong>{{ ai.headline }}</strong></p>
+  <p>{{ ai.summary }}</p>
+  <p class="muted small">Written by an AI model ({{ ai.model }}) from the findings below. It can make
+  mistakes; the verdict comes from the deterministic checks, not from the model.</p>
+</div>
+{% else %}
+<p>{{ fallback_summary }}</p>
+{% if ai_note %}<p class="muted small">AI summary not included: {{ ai_note }}.</p>{% endif %}
+{% endif %}
+
+<h2>What to do</h2>
+<ul>
+{% for action in actions %}  <li>{{ action }}</li>
+{% endfor %}</ul>
+
+<h2>Findings</h2>
+<table>
+  <tr><th class="num">Pts</th><th>Finding</th><th>Signal</th></tr>
+  {% for f in findings %}
+  <tr>
+    <td class="num">{% if f.force_critical %}<span class="force">CRIT</span>{% else %}{{ f.points }}{% endif %}</td>
+    <td>{{ f.message }}</td>
+    <td class="mono muted">{{ f.signal }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if info_findings %}
+<p class="muted small">Other checks: {% for f in info_findings %}{{ f.message }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+{% endif %}
+
+<h2>Indicators of compromise</h2>
+<p class="muted small">Links and domains are defanged (<span class="mono">hxxps</span>, <span class="mono">[.]</span>) so they cannot be opened by accident.</p>
+<table>
+  {% if ioc_domains %}<tr><td class="key">Domains</td><td class="mono">{{ ioc_domains | join(", ") }}</td></tr>{% endif %}
+  {% if sender_ip %}<tr><td class="key">IP address</td><td class="mono">{{ sender_ip_defanged }}</td></tr>{% endif %}
+  {% if urls %}<tr><td class="key">Links ({{ urls | length }})</td><td class="mono">{% for u in urls %}{{ u }}<br>{% endfor %}{% if urls_truncated %}... and {{ urls_truncated }} more{% endif %}</td></tr>{% endif %}
+</table>
+
+{% if attachments %}
+<h2>Attachments</h2>
+<table>
+  <tr><th>File</th><th>Type</th><th>Size</th><th>SHA-256</th></tr>
+  {% for a in attachments %}
+  <tr><td>{{ a.filename or "(unnamed)" }}</td><td class="mono">{{ a.content_type }}</td><td>{{ a.size_kb }} KB</td><td class="mono">{{ a.sha256 }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if auth %}
+<h2>Email authentication</h2>
+<p class="mono">{{ auth }}</p>
+{% endif %}
+
+{% if hops %}
+<h2>Delivery path</h2>
+<p class="muted small">Newest first. Only the first hop was recorded by your own mail provider; the rest could be forged.</p>
+<table>
+  <tr><th>From (as announced)</th><th>Connecting server</th><th>Received by</th></tr>
+  {% for h in hops %}
+  <tr><td class="mono">{{ h.from_helo or "" }}</td><td class="mono">{{ h.from_ip or "" }}{% if h.from_rdns %} ({{ h.from_rdns }}){% endif %}</td><td class="mono">{{ h.by_host or "" }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<p class="footer muted small">Phishing Email Analyzer {{ version }} &middot; {{ provider }}:{{ provider_id }}.
+Scores come from rule-based checks and threat-intelligence lookups; a Clean verdict is not a guarantee.</p>
+</div>
+</body>
+</html>

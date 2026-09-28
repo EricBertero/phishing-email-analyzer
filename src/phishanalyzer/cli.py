@@ -20,9 +20,11 @@ from phishanalyzer.analyzers import build_analyzers
 from phishanalyzer.config import Settings, load_settings
 from phishanalyzer.intel import Intel
 from phishanalyzer.models import Level
-from phishanalyzer.parsing import parse_file
+from phishanalyzer.parsing import parse_file, parse_message
 from phishanalyzer.pipeline import analyze_email
-from phishanalyzer.providers import AuthRequired
+from phishanalyzer.providers import AuthRequired, MessageGone, ProviderError
+from phishanalyzer.reporting.ai_summary import Summarizer
+from phishanalyzer.reporting.reporter import Reporter
 from phishanalyzer.sandbox_worker import SandboxWorker
 from phishanalyzer.scanner import Scanner
 from phishanalyzer.storage import ACTIVE_JOB_STATUSES, JobStatus, Store
@@ -75,17 +77,25 @@ def scan_eml(
     ] = False,
     offline: Annotated[
         bool,
-        typer.Option("--offline", help="Skip threat-intel lookups: nothing leaves this machine"),
+        typer.Option(
+            "--offline",
+            help="Skip threat-intel lookups and AI summaries: nothing leaves this machine",
+        ),
+    ] = False,
+    report: Annotated[
+        bool,
+        typer.Option("--report", help="Also write an HTML/PDF report for each file"),
     ] = False,
 ) -> None:
     """Analyse local .eml files and print the score breakdown.
 
     Configured threat-intel services are queried with the email's indicators (URLs,
-    domains, IPs, attachment hashes) unless --offline is given.
+    domains, IPs, attachment hashes) unless --offline is given. With --report, the AI
+    summary (if configured) receives the findings and a short redacted excerpt.
     """
     settings = load_settings(config_path)
     console = Console()
-    results = asyncio.run(_scan_files(files, settings, offline))
+    results = asyncio.run(_scan_files(files, settings, offline, report))
 
     if as_json:
         payload = [
@@ -151,18 +161,27 @@ def _gmail(settings, interactive: bool = False):
         raise typer.Exit(1) from exc
 
 
-async def _scan_files(files: list[Path], settings: Settings, offline: bool):
+async def _scan_files(files: list[Path], settings: Settings, offline: bool, report: bool):
     intel = None if offline else Intel(settings)
     analyzers = build_analyzers(settings, intel)
+    reporter = (
+        Reporter(settings, None, None if offline else Summarizer(settings)) if report else None
+    )
     try:
         results = []
         for path in files:
             email = parse_file(path)
-            results.append((path, email, await analyze_email(email, settings, analyzers)))
+            verdict = await analyze_email(email, settings, analyzers)
+            results.append((path, email, verdict))
+            if reporter:
+                written = await reporter.report("file", email, verdict, provider_id=path.stem)
+                typer.echo(f"Report: {written.html_path}", err=True)
         return results
     finally:
         if intel:
             await intel.aclose()
+        if reporter:
+            await reporter.aclose()
 
 
 @app.command()
@@ -201,7 +220,8 @@ def run(
         intel = Intel(settings, cache=store.intel_cache())
         log.info("Threat intel: %s", ", ".join(intel.enabled) or "none configured (offline)")
         analyzers = build_analyzers(settings, intel, store, provider.name)
-        scanner = Scanner(settings, provider, store, analyzers)
+        reporter = Reporter(settings, store, Summarizer(settings))
+        scanner = Scanner(settings, provider, store, analyzers, reporter)
         worker = (
             SandboxWorker(settings, provider, store, intel.hybrid_analysis, scanner)
             if intel.hybrid_analysis
@@ -232,6 +252,7 @@ def run(
                 await _run_until_stopped(scanner, worker)
         finally:
             await intel.aclose()
+            await reporter.aclose()
 
     try:
         asyncio.run(main())
@@ -256,6 +277,45 @@ async def _run_until_stopped(scanner: Scanner, worker: SandboxWorker | None) -> 
     finally:
         stop.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@app.command("report")
+def report_command(
+    message_id: Annotated[str, typer.Argument(help="Gmail message id (see `phish recent --ids`)")],
+    config_path: ConfigOption = None,
+) -> None:
+    """Re-analyse one Gmail message and (re)write its report, whatever its level."""
+    _setup_logging()
+    settings = load_settings(config_path)
+    provider = _gmail(settings)
+    store = Store(settings.paths.db)
+
+    async def main():
+        intel = Intel(settings, cache=store.intel_cache())
+        reporter = Reporter(settings, store, Summarizer(settings))
+        try:
+            raw = await asyncio.to_thread(provider.get_raw, message_id)
+            email = parse_message(raw, provider_id=message_id)
+            analyzers = build_analyzers(settings, intel, store, provider.name)
+            verdict = await analyze_email(email, settings, analyzers)
+            row = store.get_row(provider.name, message_id)
+            store.save_result(provider.name, email, verdict, rechecks=row.rechecks if row else 0)
+            return await reporter.report(provider.name, email, verdict)
+        finally:
+            await intel.aclose()
+            await reporter.aclose()
+
+    try:
+        written = asyncio.run(main())
+    except (AuthRequired, MessageGone, ProviderError) as exc:
+        typer.secho(str(exc) or type(exc).__name__, fg="red", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"{written.level.value.upper()} {written.score}/100")
+    typer.echo(f"HTML: {written.html_path}")
+    if written.pdf_path:
+        typer.echo(f"PDF:  {written.pdf_path}")
+    if written.ai_status != "ok":
+        typer.echo(f"AI summary: {written.ai_status}")
 
 
 sandbox_app = typer.Typer(help="Review and approve attachment uploads to the sandbox.")
@@ -341,16 +401,21 @@ def recent(
     config_path: ConfigOption = None,
     limit: Annotated[int, typer.Option("--limit", "-n")] = 20,
     level: Annotated[Level | None, typer.Option("--level", case_sensitive=False)] = None,
+    ids: Annotated[
+        bool, typer.Option("--ids", help="Show message ids (for `phish report`)")
+    ] = False,
 ) -> None:
     """List the most recently scanned emails."""
     settings = load_settings(config_path)
     rows = Store(settings.paths.db).recent(limit=limit, level=level)
     table = Table(box=None, header_style="bold")
-    for column in ("scanned (UTC)", "level", "score", "from", "subject"):
+    columns = ["scanned (UTC)", "level", "score", "from", "subject"]
+    for column in ["id", *columns] if ids else columns:
         table.add_column(column)
     for row in rows:
         lvl = Level(row.level) if row.level else None
         table.add_row(
+            *([row.provider_id] if ids else []),
             row.scanned_at.strftime("%Y-%m-%d %H:%M"),
             f"[{_LEVEL_STYLE[lvl]}]{lvl.value}[/]" if lvl else "[red]error[/]",
             "" if row.score is None else str(row.score),

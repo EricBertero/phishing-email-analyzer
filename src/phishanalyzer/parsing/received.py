@@ -8,7 +8,8 @@ from phishanalyzer.domains import is_ip, is_public_ip
 from phishanalyzer.models import ReceivedHop
 
 _FROM = re.compile(r"\bfrom\s+(\S+)", re.I)
-_BY = re.compile(r"\bby\s+([A-Za-z0-9.\-]+)", re.I)
+# Hostname or bare IP: Gmail's internal hops use IPv6, e.g. "by 2002:adf:f18d::".
+_BY = re.compile(r"\bby\s+([A-Za-z0-9.:\-]+)", re.I)
 _PAREN = re.compile(r"\(([^()]*)\)")
 _IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 _IPV6 = re.compile(r"\[(?:IPv6:)?([0-9a-fA-F:]+:[0-9a-fA-F:.]*)\]")
