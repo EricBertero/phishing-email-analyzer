@@ -53,7 +53,7 @@ def _addr(value: str | None) -> str | None:
 def parse_message(raw: bytes, provider_id: str | None = None) -> Email:
     msg: EmailMessage = message_from_bytes(raw, policy=policy.default)  # type: ignore[assignment]
     headers = _header_items(msg)
-    email = Email(provider_id=provider_id, headers=headers)
+    email = Email(provider_id=provider_id, headers=headers, raw=raw)
 
     email.message_id = (email.header("Message-ID") or "").strip() or None
     email.subject = email.header("Subject") or ""
