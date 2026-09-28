@@ -279,3 +279,18 @@ def test_build_analyzers_only_enables_configured_services():
     assert {"urlhaus", "virustotal"} <= analyzer_names
     assert "spamhaus" not in analyzer_names
     assert enabled == ["urlhaus", "virustotal"]
+
+
+def test_sandbox_analyzer_only_with_hybrid_analysis_key():
+    off = Settings(secrets=Secrets(_env_file=None))
+    on = Settings(secrets=Secrets(_env_file=None, hybrid_analysis_api_key="k"))
+
+    async def names(settings):
+        intel = Intel(settings)
+        try:
+            return {a.name for a in build_analyzers(settings, intel)}
+        finally:
+            await intel.aclose()
+
+    assert "sandbox" not in asyncio.run(names(off))
+    assert "sandbox" in asyncio.run(names(on))

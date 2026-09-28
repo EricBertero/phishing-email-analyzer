@@ -13,12 +13,14 @@ from phishanalyzer.analyzers.intel import (
     UrlhausAnalyzer,
     VirusTotalAnalyzer,
 )
+from phishanalyzer.analyzers.sandbox import SandboxAnalyzer
 from phishanalyzer.analyzers.spam import RspamdAnalyzer, SpamHeaderAnalyzer
 from phishanalyzer.analyzers.urls import UrlAnalyzer
 
 if TYPE_CHECKING:
     from phishanalyzer.config import Settings
     from phishanalyzer.intel import Intel
+    from phishanalyzer.storage import Store
 
 
 def offline_analyzers() -> list[Analyzer]:
@@ -33,8 +35,17 @@ def offline_analyzers() -> list[Analyzer]:
     ]
 
 
-def build_analyzers(settings: Settings, intel: Intel | None) -> list[Analyzer]:
-    """Offline checks plus every threat-intel check whose service is configured."""
+def build_analyzers(
+    settings: Settings,
+    intel: Intel | None,
+    store: Store | None = None,
+    provider: str | None = None,
+) -> list[Analyzer]:
+    """Offline checks plus every threat-intel check whose service is configured.
+
+    `store` and `provider` enable sandbox queueing; without them the sandbox analyzer only
+    looks up existing Hybrid Analysis reports (as in `scan-eml`).
+    """
     analyzers = offline_analyzers()
     if intel is None:
         return analyzers
@@ -46,6 +57,10 @@ def build_analyzers(settings: Settings, intel: Intel | None) -> list[Analyzer]:
         analyzers.append(AbuseIpdbAnalyzer(intel.abuseipdb))
     if intel.virustotal:
         analyzers.append(VirusTotalAnalyzer(intel.virustotal, settings))
+    if intel.hybrid_analysis:
+        analyzers.append(
+            SandboxAnalyzer(intel.hybrid_analysis, settings, store, provider, intel.virustotal)
+        )
     if intel.rspamd:
         analyzers.append(RspamdAnalyzer(intel.rspamd))
     return analyzers
@@ -59,6 +74,7 @@ __all__ = [
     "ContentAnalyzer",
     "HeaderAnalyzer",
     "RspamdAnalyzer",
+    "SandboxAnalyzer",
     "SpamHeaderAnalyzer",
     "SpamhausAnalyzer",
     "UrlAnalyzer",

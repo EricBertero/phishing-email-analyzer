@@ -14,6 +14,7 @@ from phishanalyzer.intel.base import (
     MemoryCache,
     RateLimiter,
 )
+from phishanalyzer.intel.hybrid_analysis import HybridAnalysisClient
 from phishanalyzer.intel.rspamd import RspamdClient
 from phishanalyzer.intel.spamhaus import Resolve, SpamhausClient, dns_resolve
 from phishanalyzer.intel.urlhaus import UrlhausClient
@@ -77,6 +78,19 @@ class Intel:
             if key
             else None
         )
+        key = settings.secret("hybrid_analysis_api_key")
+        self.hybrid_analysis = (
+            HybridAnalysisClient(
+                self.http,
+                self.cache,
+                # Submissions are slow and quota-limited; stay well below the API limits.
+                RateLimiter(per_minute=20, max_wait=30),
+                api_key=key,
+                **common,
+            )
+            if key
+            else None
+        )
         key = settings.secret("spamhaus_dqs_key")
         self.spamhaus = SpamhausClient(self.cache, key, resolve, ttl) if key else None
         # rspamd scans the full message, so its results are never cached.
@@ -88,7 +102,14 @@ class Intel:
 
     @property
     def enabled(self) -> list[str]:
-        clients = [self.urlhaus, self.abuseipdb, self.virustotal, self.spamhaus, self.rspamd]
+        clients = [
+            self.urlhaus,
+            self.abuseipdb,
+            self.virustotal,
+            self.hybrid_analysis,
+            self.spamhaus,
+            self.rspamd,
+        ]
         return [c.service for c in clients if c is not None]
 
     async def aclose(self) -> None:
