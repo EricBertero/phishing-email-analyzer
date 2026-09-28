@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_macros.html" import level_badge, email_row %}
+{% block title %}Overview · Phishing Email Analyzer{% endblock %}
+{% block content %}
+{% set c = o.chart %}
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <div class="muted">Last 14 days</div>
+  </div>
+</div>
+
+<div class="tiles">
+  <div class="tile"><div class="label">Emails scanned</div><div class="value">{{ "{:,}".format(o.scanned) }}</div>
+    <div class="hint">{% if o.partial %}{{ o.partial }} partial, being re-checked{% else %}all checks complete{% endif %}</div></div>
+  <a class="tile" href="/emails?level=critical"><div class="label">{{ level_badge("critical") }}</div><div class="value">{{ o.level_totals.critical }}</div><div class="hint">reported automatically</div></a>
+  <a class="tile" href="/emails?level=high"><div class="label">{{ level_badge("high") }}</div><div class="value">{{ o.level_totals.high }}</div><div class="hint">likely phishing</div></a>
+  <a class="tile" href="/emails?level=suspicious"><div class="label">{{ level_badge("suspicious") }}</div><div class="value">{{ o.level_totals.suspicious }}</div><div class="hint">worth a second look</div></a>
+  <a class="tile" href="/sandbox"><div class="label">Awaiting approval</div><div class="value">{{ o.awaiting_approval }}</div><div class="hint">sandbox uploads</div></a>
+</div>
+
+<section class="card" aria-labelledby="chart-title">
+  <div class="chart-head">
+    <div>
+      <h2 id="chart-title" class="tight">Emails scanned per day, by verdict</h2>
+      <div class="muted small">{{ "{:,}".format(c.total) }} emails &middot; Clean and Low are grouped; see the table for each level</div>
+    </div>
+    <ul class="legend" aria-label="Legend">
+      {% for key, label in c.groups | reverse %}<li><span class="swatch fill-{{ key }}"></span>{{ label }}</li>{% endfor %}
+    </ul>
+  </div>
+  <div class="chart-wrap" data-groups='{{ c.groups | tojson }}'>
+    <svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="group" aria-labelledby="chart-title">
+      {% for y, value in c.ticks %}
+      <line class="grid" x1="{{ c.plot_left }}" x2="{{ c.plot_right }}" y1="{{ '%.1f' % y }}" y2="{{ '%.1f' % y }}"></line>
+      <text x="{{ c.plot_left - 8 }}" y="{{ '%.1f' % (y + 4) }}" text-anchor="end">{{ value }}</text>
+      {% endfor %}
+      {% for col in c.columns %}
+      <g class="col" tabindex="0" role="img" aria-label="{{ col.label }}: {{ col.total }} scanned, {{ col.counts.critical }} critical, {{ col.counts.high }} high, {{ col.counts.suspicious }} suspicious"
+         data-day="{{ col.label }}" data-total="{{ col.total }}" {% for key, _ in c.groups %}data-{{ key }}="{{ col.counts[key] }}" {% endfor %}>
+        <rect class="hit" x="{{ '%.1f' % col.hit_x }}" y="0" width="{{ '%.1f' % col.hit_width }}" height="{{ c.baseline }}" rx="4"></rect>
+        {% for seg in col.segments %}<path class="fill-{{ seg.group }}" d="{{ seg.path }}"></path>{% endfor %}
+        <text x="{{ '%.1f' % (col.x + col.width / 2) }}" y="{{ c.baseline + 18 }}" text-anchor="middle">{{ col.label }}</text>
+      </g>
+      {% endfor %}
+      <line class="axis" x1="{{ c.plot_left }}" x2="{{ c.plot_right }}" y1="{{ c.baseline }}" y2="{{ c.baseline }}"></line>
+    </svg>
+    <div class="tooltip" hidden></div>
+  </div>
+  <details class="table-view">
+    <summary>Show as table</summary>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Day</th>{% for lv in levels | reverse %}<th class="num">{{ level_labels[lv] }}</th>{% endfor %}<th class="num">Total</th></tr></thead>
+        <tbody>
+        {% for col in c.columns | reverse %}
+          <tr><td>{{ col.label }}</td>{% for lv in levels | reverse %}<td class="num">{{ col.level_counts[lv] }}</td>{% endfor %}<td class="num"><strong>{{ col.total }}</strong></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Latest high-risk emails</h2>
+    {% if o.high_risk %}
+    <div class="table-wrap"><table class="data"><tbody>
+      {% for row in o.high_risk %}{{ email_row(row) }}{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="empty">No high-risk emails in the last 14 days.</p>{% endif %}
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Top senders of high-risk mail</h2>
+      {% if o.top_domains %}<ul class="list">{% for domain, n in o.top_domains %}
+        <li><a class="mono" href="/emails?q={{ domain | urlencode }}">{{ domain }}</a><span class="num">{{ n }}</span></li>{% endfor %}</ul>
+      {% else %}<p class="empty">None yet.</p>{% endif %}
+    </section>
+    <section class="card">
+      <h2>Most common warning signs</h2>
+      {% if o.top_findings %}<ul class="list">{% for signal, n in o.top_findings %}
+        <li><span class="mono">{{ signal }}</span><span class="num">{{ n }}</span></li>{% endfor %}</ul>
+      {% else %}<p class="empty">None yet.</p>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
