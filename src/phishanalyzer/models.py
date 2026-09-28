@@ -26,6 +26,11 @@ class Level(StrEnum):
     HIGH = "high"
     CRITICAL = "critical"
 
+    @property
+    def rank(self) -> int:
+        """0 (clean) .. 4 (critical), for comparisons like `level.rank >= other.rank`."""
+        return list(Level).index(self)
+
 
 class Attachment(BaseModel):
     filename: str | None

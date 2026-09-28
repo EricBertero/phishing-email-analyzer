@@ -107,6 +107,28 @@ class SandboxJob(SQLModel, table=True):
     applied: bool = False
 
 
+class Report(SQLModel, table=True):
+    """The latest incident report for an email (regenerated in place when it changes)."""
+
+    __tablename__ = "reports"
+    __table_args__ = (UniqueConstraint("provider", "provider_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider: str = Field(index=True)
+    provider_id: str
+    html_path: str
+    pdf_path: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    level: Level
+    score: int
+    # Hash of the scored findings: identical evidence never triggers a new (paid) summary.
+    fingerprint: str
+    ai_status: str = "disabled"
+    ai_model: str | None = None
+    ai_summary: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+
+
 class IntelCacheEntry(SQLModel, table=True):
     __tablename__ = "intel_cache"
 
@@ -365,6 +387,35 @@ class Store:
             SandboxJob.provider_id == provider_id,
             SandboxJob.sha256 == sha256,
         )
+
+    # --- reports -------------------------------------------------------------------------
+    def get_report(self, provider: str, provider_id: str) -> Report | None:
+        with Session(self.engine) as s:
+            return s.exec(
+                select(Report).where(Report.provider == provider, Report.provider_id == provider_id)
+            ).first()
+
+    def save_report(self, report: Report) -> Report:
+        with Session(self.engine) as s:
+            existing = s.exec(
+                select(Report).where(
+                    Report.provider == report.provider, Report.provider_id == report.provider_id
+                )
+            ).first()
+            if existing:
+                for name, value in report.model_dump(exclude={"id", "created_at"}).items():
+                    setattr(existing, name, value)
+                existing.updated_at = utcnow()
+                report = existing
+            s.add(report)
+            s.commit()
+            s.refresh(report)
+            return report
+
+    def reports(self, limit: int = 50) -> list[Report]:
+        with Session(self.engine) as s:
+            query = select(Report).order_by(Report.updated_at.desc()).limit(limit)  # type: ignore[attr-defined]
+            return list(s.exec(query))
 
     def recent(self, limit: int = 20, level: Level | None = None) -> list[ScannedEmail]:
         with Session(self.engine) as s:

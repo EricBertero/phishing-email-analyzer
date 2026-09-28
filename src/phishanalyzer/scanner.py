@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from phishanalyzer.analyzers import Analyzer, offline_analyzers
 from phishanalyzer.config import Settings
@@ -20,6 +21,9 @@ from phishanalyzer.providers import (
     ProviderError,
 )
 from phishanalyzer.storage import ScannedEmail, Store
+
+if TYPE_CHECKING:
+    from phishanalyzer.reporting.reporter import Reporter
 
 log = logging.getLogger(__name__)
 
@@ -42,11 +46,13 @@ class Scanner:
         provider: MailProvider,
         store: Store,
         analyzers: list[Analyzer] | None = None,
+        reporter: Reporter | None = None,
     ):
         self.settings = settings
         self.provider = provider
         self.store = store
         self.analyzers = analyzers if analyzers is not None else offline_analyzers()
+        self.reporter = reporter
 
     async def _call(self, fn, *args):
         # Provider SDKs are synchronous; keep the event loop responsive.
@@ -137,6 +143,11 @@ class Scanner:
             email.subject[:80],
         )
         await self._label(row)
+        if self.reporter:
+            try:
+                await self.reporter.maybe_report(self.provider.name, email, verdict)
+            except Exception:  # a report is a by-product; never let it stop scanning
+                log.exception("Could not write the report for %s", message_id)
         return row
 
     async def retry_labels(self) -> None:

@@ -16,7 +16,7 @@ Hybrid Analysis sandboxing). Each email gets a Gmail label (`Phish/Clean` …
 - [x] **3. Gmail**: OAuth, History API polling, labels, SQLite storage
 - [x] **4. Threat intel**: URLhaus, Spamhaus DQS, AbuseIPDB, VirusTotal, optional rspamd
 - [x] **5. Sandbox**: Hybrid Analysis detonation with async re-scoring
-- [ ] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
+- [x] **6. Reports**: HTML/PDF plus a Claude-written summary for Critical emails
 - [ ] **7. Dashboard**: FastAPI web UI
 
 ## Setup
@@ -168,6 +168,43 @@ intel:
   rspamd_url: http://localhost:11333
 ```
 
+## Reports
+
+Every email at or above `reports.min_level` (default: Critical) gets an incident report
+in `reports/`, as HTML and PDF. A report has the verdict, what to do, every finding with
+its points, the indicators of compromise, attachment hashes, authentication results and
+the delivery path. Links, domains and addresses are **defanged** (`hxxps://evil[.]com`),
+so nothing in a report can be clicked by accident. A report is rewritten when the
+evidence changes, for example when a sandbox verdict arrives, and not otherwise.
+
+```bash
+phish recent --ids               # find a message id
+phish report 18c2f0a9b1d3e4f5    # (re)write the report for any message, whatever its level
+phish scan-eml mail.eml --report # report for a saved email
+```
+
+### AI summary
+
+With `ANTHROPIC_API_KEY` set in `.env` (or an `ant auth login` profile), each report
+opens with a short plain-language summary and advice written by Claude (default model
+`claude-opus-5-5`, see `ai_summary` in `config.yaml`).
+
+- **The verdict never comes from the model.** Claude explains the findings from the
+  deterministic checks; it cannot change the level or score, and the report says so.
+- **What is sent**: the verdict and findings, the sender's display name and domains, the
+  subject, defanged link hosts, attachment names and sizes, and the first
+  `max_excerpt_chars` of the body with email addresses, phone numbers, account and card
+  numbers, codes and links masked. **Never** attachments or full URLs.
+- The email text is marked as untrusted data, and instructions inside it are ignored, so
+  a phishing email can't talk the summary into calling it safe. All output is escaped
+  in the report.
+- The request enables the API's server-side fallback, so if the model declines a request
+  (security content can trigger safety filters) it's retried on another model instead
+  of producing nothing.
+- Without credentials, or if the API is down, the report is still written, with
+  rule-based advice and a note saying why there is no summary. `scan-eml --offline`
+  never calls it.
+
 ## Scoring
 
 Each check emits *findings*, and each finding carries its own points and evidence. The
@@ -198,8 +235,8 @@ Thresholds and per-signal weights can be changed in `config.yaml`.
   everything local.
 - The one exception is the sandbox, which receives an attachment only if you allow it
   (`sandbox_upload`, default `never`). Message text is never sent. See [Sandbox](#sandbox).
-- The AI summary gets the findings, the headers and a short redacted body excerpt. It
-  never gets attachments.
+- The AI summary gets the findings, sender, subject and a short redacted body excerpt,
+  never attachments or full links. See [AI summary](#ai-summary).
 
 ## Development
 
