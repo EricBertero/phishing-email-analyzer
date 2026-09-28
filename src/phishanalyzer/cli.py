@@ -23,8 +23,9 @@ from phishanalyzer.models import Level
 from phishanalyzer.parsing import parse_file
 from phishanalyzer.pipeline import analyze_email
 from phishanalyzer.providers import AuthRequired
+from phishanalyzer.sandbox_worker import SandboxWorker
 from phishanalyzer.scanner import Scanner
-from phishanalyzer.storage import Store
+from phishanalyzer.storage import ACTIVE_JOB_STATUSES, JobStatus, Store
 
 app = typer.Typer(help="Phishing Email Analyzer", no_args_is_help=True)
 
@@ -199,7 +200,15 @@ def run(
     async def main() -> None:
         intel = Intel(settings, cache=store.intel_cache())
         log.info("Threat intel: %s", ", ".join(intel.enabled) or "none configured (offline)")
-        scanner = Scanner(settings, provider, store, build_analyzers(settings, intel))
+        analyzers = build_analyzers(settings, intel, store, provider.name)
+        scanner = Scanner(settings, provider, store, analyzers)
+        worker = (
+            SandboxWorker(settings, provider, store, intel.hybrid_analysis, scanner)
+            if intel.hybrid_analysis
+            else None
+        )
+        if worker:
+            log.info("Sandbox: uploads %s", settings.sandbox_upload.value)
         try:
             if once:
                 result = await scanner.poll_once()
@@ -210,8 +219,17 @@ def run(
                     result.failed,
                     result.rechecked,
                 )
+                if worker:
+                    sandbox = await worker.run_once()
+                    log.info(
+                        "Sandbox: %d submitted, %d finished, %d failed, %d re-scored",
+                        sandbox.submitted,
+                        sandbox.finished,
+                        sandbox.failed,
+                        sandbox.rescored,
+                    )
             else:
-                await scanner.run_forever()
+                await _run_until_stopped(scanner, worker)
         finally:
             await intel.aclose()
 
@@ -222,6 +240,100 @@ def run(
         raise typer.Exit(1) from exc
     except KeyboardInterrupt:
         log.info("Stopped")
+
+
+async def _run_until_stopped(scanner: Scanner, worker: SandboxWorker | None) -> None:
+    """Run the mailbox poller and the sandbox worker side by side.
+
+    If one of them dies (e.g. Gmail access was revoked), stop the other and re-raise.
+    """
+    stop = asyncio.Event()
+    tasks = [asyncio.create_task(scanner.run_forever(stop))]
+    if worker:
+        tasks.append(asyncio.create_task(worker.run_forever(stop)))
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+sandbox_app = typer.Typer(help="Review and approve attachment uploads to the sandbox.")
+app.add_typer(sandbox_app, name="sandbox")
+
+
+@sandbox_app.command("list")
+def sandbox_list(
+    config_path: ConfigOption = None,
+    all_jobs: Annotated[bool, typer.Option("--all", help="Include finished jobs")] = False,
+    limit: Annotated[int, typer.Option("--limit", "-n")] = 50,
+) -> None:
+    """List sandbox jobs (by default only those still open)."""
+    settings = load_settings(config_path)
+    store = Store(settings.paths.db)
+    jobs = store.jobs(statuses=None if all_jobs else ACTIVE_JOB_STATUSES, limit=limit)
+    if not jobs:
+        typer.echo("No sandbox jobs." if all_jobs else "No open sandbox jobs.")
+        return
+    table = Table(box=None, header_style="bold")
+    for column in ("id", "status", "file", "size", "verdict", "from", "subject"):
+        table.add_column(column)
+    for job in jobs:
+        row = store.get_row(job.provider, job.provider_id)
+        table.add_row(
+            str(job.id),
+            job.status.value,
+            job.filename or job.sha256[:12],
+            f"{job.size / 1024:.0f} KB",
+            f"{job.verdict} ({job.threat_score})" if job.verdict else "",
+            (row.from_addr or "") if row else "",
+            ((row.subject or "")[:50]) if row else "",
+        )
+    Console().print(table)
+    waiting = sum(1 for j in jobs if j.status is JobStatus.AWAITING_APPROVAL)
+    if waiting:
+        typer.echo()
+        typer.echo(
+            f"{waiting} awaiting approval. Uploading makes a file visible to other users "
+            "of the sandbox service."
+        )
+        typer.echo("Approve with `phish sandbox approve <id>` or `--all`; decline with reject.")
+
+
+def _decide(approve: bool, ids: list[int] | None, all_jobs: bool, config_path: Path | None) -> None:
+    if not ids and not all_jobs:
+        typer.secho("Give job ids, or --all.", fg="red", err=True)
+        raise typer.Exit(2)
+    store = Store(load_settings(config_path).paths.db)
+    count = store.decide_jobs(approve, None if all_jobs else ids)
+    verb = "Approved" if approve else "Rejected"
+    typer.echo(f"{verb} {count} job(s).")
+    if approve and count:
+        typer.echo("The running `phish run` will upload them within a poll interval.")
+
+
+@sandbox_app.command("approve")
+def sandbox_approve(
+    ids: Annotated[
+        list[int] | None, typer.Argument(help="Job ids from `phish sandbox list`")
+    ] = None,
+    all_jobs: Annotated[bool, typer.Option("--all")] = False,
+    config_path: ConfigOption = None,
+) -> None:
+    """Allow the listed files to be uploaded to Hybrid Analysis."""
+    _decide(True, ids, all_jobs, config_path)
+
+
+@sandbox_app.command("reject")
+def sandbox_reject(
+    ids: Annotated[
+        list[int] | None, typer.Argument(help="Job ids from `phish sandbox list`")
+    ] = None,
+    all_jobs: Annotated[bool, typer.Option("--all")] = False,
+    config_path: ConfigOption = None,
+) -> None:
+    """Decline the upload of the listed files."""
+    _decide(False, ids, all_jobs, config_path)
 
 
 @app.command()

@@ -62,6 +62,22 @@ class Dashboard(BaseModel):
     port: int = 8000
 
 
+class Sandbox(BaseModel):
+    """Hybrid Analysis detonation of attachments no service has seen before.
+
+    Whether files may be uploaded at all is the top-level `sandbox_upload` setting.
+    """
+
+    # 120 = Windows 7 64-bit, 100/110 = Windows 7 32-bit, 300 = Linux (Ubuntu, 64-bit).
+    environment_id: int = 120
+    max_file_mb: int = Field(default=20, ge=1, le=100)
+    # Give up on a submitted job after this long.
+    timeout_minutes: int = Field(default=45, ge=5)
+    poll_interval_seconds: int = Field(default=30, ge=10)
+    # Hybrid Analysis option: allow the sample to be shared with third parties.
+    share_third_party: bool = False
+
+
 class Intel(BaseModel):
     """Threat-intel lookups. Each service is enabled by its API key in .env."""
 
@@ -112,6 +128,7 @@ class Settings(BaseModel):
     paths: Paths = Field(default_factory=Paths)
     dashboard: Dashboard = Field(default_factory=Dashboard)
     intel: Intel = Field(default_factory=Intel)
+    sandbox: Sandbox = Field(default_factory=Sandbox)
     ai_summary: AiSummary = Field(default_factory=AiSummary)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 
