@@ -260,6 +260,15 @@ def test_security_headers(env):
     assert headers["x-frame-options"] == "DENY"
 
 
+def test_brand_fonts_are_served_locally_and_theme_follows_the_system(env):
+    font = env.client.get("/static/fonts/geist-latin.woff2")
+    assert font.status_code == 200
+    assert font.headers["content-type"] == "font/woff2"
+    page = env.client.get("/").text
+    assert 'href="#main-content"' in page  # skip link
+    assert "theme-toggle" not in page  # no manual switch: the brand follows the OS setting
+
+
 def test_reports_are_served_with_script_free_csp(env):
     deliver_and_scan(env, "bad", PHISH)
     report = env.store.get_report("gmail", "bad")

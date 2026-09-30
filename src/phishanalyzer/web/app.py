@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import mimetypes
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +38,9 @@ from phishanalyzer.web.stats import build_overview
 log = logging.getLogger(__name__)
 
 HERE = Path(__file__).parent
+# Windows' registry often lacks woff2, so the bundled Geist fonts would go out as
+# application/octet-stream. Register the proper type once.
+mimetypes.add_type("font/woff2", ".woff2")
 PAGE_SIZE = 50
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
@@ -112,8 +116,9 @@ def _filesize(size: int) -> str:
 def _asset_version() -> str:
     """Content hash of the static files: browsers refetch them exactly when they change."""
     digest = hashlib.sha256()
-    for path in sorted((HERE / "static").iterdir()):
-        digest.update(path.read_bytes())
+    for path in sorted((HERE / "static").rglob("*")):
+        if path.is_file():
+            digest.update(path.read_bytes())
     return digest.hexdigest()[:10]
 
 

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% from "_macros.html" import level_badge %}
+{% from "_macros.html" import level_badge, icon %}
 {% block title %}{{ row.subject or "Email" }} · Phishing Email Analyzer{% endblock %}
 {% block content %}
-<p class="small"><a href="/emails">&larr; All emails</a></p>
+<a class="back" href="/emails">{{ icon("arrow-left") }}All emails</a>
 <div class="page-head">
   <div>
     <h1>{{ row.subject or row.error or "(no subject)" }}</h1>
@@ -33,7 +33,7 @@
         <div>
           {{ level_badge(row.level.value if row.level else None, big=True) }}
           {% if row.score is not none %}
-          <div class="score-bar" aria-hidden="true"><span class="bar-{{ (row.score // 10) * 10 }}"></span></div>
+          <div class="score-bar {{ row.level.value if row.level else '' }}" aria-hidden="true"><span class="bar-{{ (row.score // 10) * 10 }}"></span></div>
           <div class="small muted">Score {{ row.score }} / 100{% if row.partial %} &middot; partial: some lookups were unavailable and will be retried{% endif %}</div>
           {% endif %}
         </div>
@@ -70,8 +70,8 @@
     <section class="card">
       <h2>Report</h2>
       {% if report %}
-      <p><a class="btn primary" href="/reports/{{ report.id }}" target="_blank" rel="noopener">Open report</a>
-         {% if report.pdf_path %}<a class="btn" href="/reports/{{ report.id }}/pdf" target="_blank" rel="noopener">PDF</a>{% endif %}</p>
+      <p class="actions"><a class="btn primary" href="/reports/{{ report.id }}" target="_blank" rel="noopener">Open report{{ icon("external") }}<span class="visually-hidden"> (opens in a new tab)</span></a>
+         {% if report.pdf_path %}<a class="btn" href="/reports/{{ report.id }}/pdf" target="_blank" rel="noopener">{{ icon("download") }}PDF</a>{% endif %}</p>
       <p class="small muted">Updated {{ report.updated_at | ago }}.
         {% if report.ai_status == "ok" %}Includes an AI summary ({{ report.ai_model }}).{% else %}No AI summary ({{ report.ai_status }}).{% endif %}</p>
       {% else %}
