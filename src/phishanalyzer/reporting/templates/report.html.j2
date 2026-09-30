@@ -5,40 +5,53 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phishing report: {{ level_label }} ({{ score }}/100)</title>
 {#- Deliberately plain CSS: the same template is rendered to PDF by xhtml2pdf, which
-    supports blocks and tables but not flexbox or grid. -#}
+    supports blocks and tables but not flexbox, grid or CSS variables, so colours are the
+    ebertero-brand palette's hex values (light roles: this is a printable document).
+    The @font-face block is for the browser view only; render_pdf() strips it, and the PDF
+    uses Helvetica, which every PDF reader has. -#}
 <style>
+  /* screen-fonts:start */
+  @font-face { font-family: "Geist"; font-weight: 100 900; font-display: swap;
+               src: url("/static/fonts/geist-latin.woff2") format("woff2"); }
+  @font-face { font-family: "Geist Mono"; font-weight: 100 900; font-display: swap;
+               src: url("/static/fonts/geist-mono-latin.woff2") format("woff2"); }
+  /* screen-fonts:end */
   @page { size: a4; margin: 1.6cm 1.4cm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1f2328;
-         line-height: 1.45; margin: 0; background: #ffffff; }
-  .page { max-width: 860px; margin: 0 auto; padding: 24px 16px; }
-  h1 { font-size: 17pt; margin: 0 0 4px 0; }
-  h2 { font-size: 12pt; margin: 22px 0 8px 0; padding-bottom: 3px;
-       border-bottom: 1px solid #d0d7de; -pdf-keep-with-next: true; }
-  .muted { color: #59636e; }
+  body { font-family: "Geist", Helvetica, Arial, sans-serif; font-size: 10pt; color: #0a0a0a;
+         line-height: 1.55; margin: 0; background: #ffffff; }
+  .page { max-width: 860px; margin: 0 auto; padding: 32px 24px; }
+  .rule { width: 64px; height: 4px; background: #14746f; margin: 0 0 18px 0; }
+  h1 { font-size: 20pt; font-weight: 600; letter-spacing: -0.03em; line-height: 1.2; margin: 4px 0 8px 0; }
+  h2 { font-size: 12.5pt; font-weight: 600; letter-spacing: -0.02em; margin: 26px 0 8px 0;
+       padding-bottom: 4px; border-bottom: 1px solid #d4d4d8; -pdf-keep-with-next: true; }
+  a { color: #14746f; }
+  .muted { color: #52525b; }
   .small { font-size: 8.5pt; }
-  .badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-weight: bold;
-           color: #ffffff; letter-spacing: 0.5px; }
-  .clean { background: #1a7f37; } .low { background: #0969da; }
-  .suspicious { background: #9a6700; } .high { background: #bc4c00; }
-  .critical { background: #b42318; }
+  .label { font-size: 7.5pt; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase;
+           color: #14746f; }
+  .badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-weight: 600;
+           font-size: 9pt; color: #ffffff; }
+  .clean, .low { background: #3f3f46; }
+  .suspicious, .high, .critical { background: #b91c1c; }
   table { width: 100%; border-collapse: collapse; margin: 4px 0; }
-  th, td { text-align: left; vertical-align: top; padding: 4px 6px;
-           border-bottom: 1px solid #eaeef2; }
-  th { font-size: 8.5pt; color: #59636e; text-transform: uppercase; }
+  th, td { text-align: left; vertical-align: top; padding: 5px 6px;
+           border-bottom: 1px solid #e4e4e7; }
+  th { font-size: 8.5pt; font-weight: 600; color: #52525b; border-bottom: 1px solid #d4d4d8; }
   td.num, th.num { text-align: right; white-space: nowrap; width: 48px; padding-right: 12px; }
-  td.key { width: 150px; color: #59636e; }
-  .mono { font-family: Courier, monospace; font-size: 8.5pt; word-wrap: break-word; }
-  .force { color: #b42318; font-weight: bold; }
-  .box { border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; margin: 6px 0; }
-  .ai { border-left: 4px solid #8250df; background: #fbf8ff; }
+  td.key { width: 150px; color: #52525b; }
+  .mono { font-family: "Geist Mono", Courier, monospace; font-size: 8.5pt; word-wrap: break-word; }
+  .force { color: #b91c1c; font-weight: bold; }
+  .box { border: 1px solid #d4d4d8; border-radius: 12px; padding: 12px 14px; margin: 6px 0;
+         background: #f4f4f5; }
   ul { margin: 4px 0 4px 18px; padding: 0; }
-  li { margin: 2px 0; }
-  .footer { margin-top: 28px; padding-top: 8px; border-top: 1px solid #d0d7de; }
+  li { margin: 3px 0; }
+  .footer { margin-top: 32px; padding-top: 8px; border-top: 1px solid #d4d4d8; }
 </style>
 </head>
 <body>
 <div class="page">
 
+<div class="rule"></div>
 <p class="muted small">Phishing Email Analyzer &middot; incident report &middot; generated {{ generated_at }}</p>
 <h1>{{ subject or "(no subject)" }}</h1>
 <p>
@@ -60,7 +73,8 @@
 
 <h2>Summary</h2>
 {% if ai %}
-<div class="box ai">
+<div class="box">
+  <p class="label">AI summary</p>
   <p><strong>{{ ai.headline }}</strong></p>
   <p>{{ ai.summary }}</p>
   <p class="muted small">Written by an AI model ({{ ai.model }}) from the findings below. It can make

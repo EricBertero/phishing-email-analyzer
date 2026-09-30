@@ -1,10 +1,12 @@
 """Numbers and chart geometry for the overview page.
 
-The chart is a stacked column per day. Verdict levels are *states* (good -> critical),
-so they wear the reserved status palette. That palette has four steps, so Clean and Low
-share the "good" step as one group; the stat tiles and the table view still give every
-level separately. Geometry follows the house mark specs: columns <= 24px, a 2px
-surface gap between stacked segments, a 4px rounded data-end on each column only.
+The chart is a stacked column per day. Verdict levels are *states* (clean -> critical),
+so they wear the dashboard's verdict scale (see dashboard.css): a calm neutral for mail
+that needs nothing, and the brand's reds for threats, so teal stays the one accent. The
+scale has four steps, so Clean and Low share the neutral step as one group; the stat
+tiles and the table view still give every level separately. Geometry follows the house
+mark specs: columns <= 24px, a 2px surface gap between stacked segments, a 4px rounded
+data-end on each column only.
 """
 
 from __future__ import annotations

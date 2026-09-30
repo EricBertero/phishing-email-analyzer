@@ -278,6 +278,15 @@ def test_pdf_renders_real_fixture(settings):
     assert pdf.startswith(b"%PDF") and len(pdf) > 2000
 
 
+def test_pdf_leaves_out_the_browser_only_fonts(settings):
+    email = parse_file(FIXTURES / "test1.eml")
+    verdict = asyncio.run(analyze_email(email, settings))
+    html = render_html(build_context(email, verdict, "file", "test1", None, None))
+    assert "@font-face" in html  # the browser view gets Geist from the dashboard
+    assert "@font-face" not in render_module.without_screen_fonts(html)
+    assert render_module.without_screen_fonts("no fonts here") == "no fonts here"
+
+
 # --- reporter ------------------------------------------------------------------------------
 
 

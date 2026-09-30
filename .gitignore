@@ -22,6 +22,7 @@ config.yaml
 
 # Runtime data (anchored to the repo root: src/phishanalyzer/data/ is package data)
 /data/
+/demo/
 *.db
 *.db-journal
 /reports/

@@ -1,24 +1,7 @@
-// Dashboard behaviour: chart tooltips and the theme toggle. No inline scripts (CSP).
+// Dashboard behaviour: chart tooltips. No inline scripts (CSP). The theme follows the system
+// setting in CSS alone, as the brand asks, so there is nothing to toggle here.
 (function () {
   "use strict";
-
-  // --- theme toggle (a per-browser convenience; the OS setting is the default) ---
-  const root = document.documentElement;
-  function stored() {
-    try { return localStorage.getItem("theme"); } catch (e) { return null; }
-  }
-  const saved = stored();
-  if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
-  const toggle = document.getElementById("theme-toggle");
-  if (toggle) {
-    toggle.addEventListener("click", function () {
-      const dark = root.getAttribute("data-theme") === "dark" ||
-        (!root.hasAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      const next = dark ? "light" : "dark";
-      root.setAttribute("data-theme", next);
-      try { localStorage.setItem("theme", next); } catch (e) { /* private mode */ }
-    });
-  }
 
   // --- chart tooltip: one readout per day column, on hover and keyboard focus -----
   const wrap = document.querySelector(".chart-wrap");
