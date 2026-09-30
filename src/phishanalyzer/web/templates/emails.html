@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import email_row %}
+{% from "_macros.html" import email_row, icon %}
 {% block title %}Emails · Phishing Email Analyzer{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -32,9 +32,9 @@
   </div>
   {% if pages > 1 %}
   <nav class="pager" aria-label="Pages">
-    {% if p > 1 %}<a href="{{ link(p=p - 1) }}">&larr; Newer</a>{% endif %}
+    {% if p > 1 %}<a href="{{ link(p=p - 1) }}">{{ icon("arrow-left") }}Newer</a>{% endif %}
     <span>Page {{ p }} of {{ pages }}</span>
-    {% if p < pages %}<a href="{{ link(p=p + 1) }}">Older &rarr;</a>{% endif %}
+    {% if p < pages %}<a href="{{ link(p=p + 1) }}">Older{{ icon("arrow-right") }}</a>{% endif %}
   </nav>
   {% endif %}
   {% else %}

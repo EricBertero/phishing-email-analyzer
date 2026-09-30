@@ -27,7 +27,7 @@ APP_CSP = (
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 )
 REPORT_CSP = (
-    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'self'; "
     "form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
 )
 

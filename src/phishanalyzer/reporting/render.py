@@ -148,6 +148,20 @@ def render_html(context: dict[str, Any]) -> str:
     return _env.get_template("report.html.j2").render(**context)
 
 
+SCREEN_FONTS_START = "/* screen-fonts:start */"
+SCREEN_FONTS_END = "/* screen-fonts:end */"
+
+
+def without_screen_fonts(html: str) -> str:
+    """Drop the template's web-font block: xhtml2pdf would try to fetch the dashboard's
+    /static URLs, which don't exist on disk. The PDF uses Helvetica instead."""
+    start = html.find(SCREEN_FONTS_START)
+    end = html.find(SCREEN_FONTS_END)
+    if start == -1 or end < start:
+        return html
+    return html[:start] + html[end + len(SCREEN_FONTS_END) :]
+
+
 def render_pdf(html: str) -> bytes:
     import logging
 
@@ -158,7 +172,7 @@ def render_pdf(html: str) -> bytes:
     logging.getLogger("xhtml2pdf").setLevel(logging.ERROR)
 
     buffer = io.BytesIO()
-    result = pisa.CreatePDF(html, dest=buffer, encoding="utf-8")
+    result = pisa.CreatePDF(without_screen_fonts(html), dest=buffer, encoding="utf-8")
     if result.err:
         raise RuntimeError(f"PDF rendering failed ({result.err} errors)")
     return buffer.getvalue()

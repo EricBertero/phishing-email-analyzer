@@ -36,6 +36,11 @@ dev = [
     "respx>=0.21",
     "ruff>=0.7",
 ]
+# `python scripts/record_demo.py`: records the website walkthrough video
+demo = [
+    "imageio-ffmpeg>=0.5",
+    "playwright>=1.48",
+]
 
 [project.scripts]
 phish = "phishanalyzer.cli:app"
